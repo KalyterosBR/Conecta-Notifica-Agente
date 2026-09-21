@@ -101,6 +101,10 @@ type janela struct {
 	resultado string
 	erro      error
 	concluido bool
+
+	atualizandoStatus bool
+	statusPronto      bool
+	statusPendente    string
 }
 
 var atual *janela
@@ -130,7 +134,10 @@ func Rodar(acoes Acoes) error {
 	atual.hwnd = windows.HWND(hwnd)
 	atual.criarControles()
 	atual.atualizar()
-	procSetTimer.Call(hwnd, idTimer, 5000, 0)
+	// O timer só transfere resultados já preparados para a tela. A leitura de
+	// config/estado acontece em goroutine, portanto disco lento, antivírus ou
+	// arquivo momentaneamente ocupado nunca bloqueiam a janela.
+	procSetTimer.Call(hwnd, idTimer, 1000, 0)
 
 	var msg mensagem
 	for {
@@ -228,11 +235,43 @@ func (j *janela) atualizar() {
 		j.definirStatus("Executando " + titulo + "… Aguarde; a janela continuará disponível.")
 		return
 	}
-	resumo := "Não foi possível ler o estado do agente. Use Testar conexões para o detalhe."
-	if j.acoes.Resumo != nil {
-		resumo = j.acoes.Resumo()
+	if resumo, pronto := j.consumirStatus(); pronto {
+		j.definirStatus(resumo)
 	}
-	j.definirStatus(resumo)
+	j.atualizarStatusEmSegundoPlano()
+}
+
+func (j *janela) atualizarStatusEmSegundoPlano() {
+	j.mu.Lock()
+	if j.atualizandoStatus {
+		j.mu.Unlock()
+		return
+	}
+	j.atualizandoStatus = true
+	j.mu.Unlock()
+
+	go func() {
+		resumo := "Não foi possível ler o estado do agente. Use Testar conexões para o detalhe."
+		if j.acoes.Resumo != nil {
+			resumo = j.acoes.Resumo()
+		}
+		j.mu.Lock()
+		j.statusPendente = resumo
+		j.statusPronto = true
+		j.atualizandoStatus = false
+		j.mu.Unlock()
+	}()
+}
+
+func (j *janela) consumirStatus() (string, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if !j.statusPronto {
+		return "", false
+	}
+	resumo := j.statusPendente
+	j.statusPronto = false
+	return resumo, true
 }
 
 func (j *janela) executar(titulo string, acao func() (string, error)) {
