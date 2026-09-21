@@ -1,0 +1,38 @@
+# Dependências e artefatos de build
+node_modules/
+dist/
+.next/
+*.tsbuildinfo
+next-env.d.ts
+
+# Segredos — nunca versionar
+.env
+.env.local
+*.env
+!*.env.example
+CREDENCIAIS.md
+
+# Banco de dev embutido
+.devdb/
+
+# Binários e pacotes do agente Go (gerados: make windows / zip do dist)
+apps/agent/bin/
+apps/agent/dist/
+apps/agent.zip
+*.exe
+*.msi
+*.msix
+*.zip
+*.syso
+
+# Estado local do agente e marcadores criados pelo Windows ao extrair ZIPs
+**/config.yaml
+**/dados/
+**/logs/
+*:Zone.Identifier
+
+# Sistema
+.DS_Store
+
+# env de produção do compose (segredos)
+deploy/producao.env

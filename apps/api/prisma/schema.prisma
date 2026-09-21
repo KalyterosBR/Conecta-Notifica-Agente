@@ -1,0 +1,261 @@
+// Modelo de dados do Conecta Notifica (doc §3). Cada escola é um tenant.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Direction {
+  IN  @map("in")
+  OUT @map("out")
+}
+
+/**
+ * Espelho do financeiro (Conta Azul). Atualizado pela integração ou à mão.
+ */
+enum StatusCobranca {
+  EM_DIA   @map("em_dia")
+  PENDENTE @map("pendente")
+  ATRASADO @map("atrasado")
+  ISENTO   @map("isento")
+}
+
+enum MessageStatus {
+  QUEUED    @map("queued")
+  SENT      @map("sent")
+  DELIVERED @map("delivered")
+  READ      @map("read")
+  FAILED    @map("failed")
+}
+
+model School {
+  id             String   @id @default(uuid())
+  name           String
+  plan           String   @default("basico")
+  timezone       String   @default("America/Sao_Paulo")
+  providerConfig Json?    @map("provider_config")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  // -- Contrato, definido pelo admin interno --------------------------------
+  cnpj         String? @unique
+  /// Alunos que o plano libera. null = sem teto.
+  maxStudents  Int?    @map("max_students")
+  /// Chips: quantos números a escola pode conectar por QR code.
+  maxInstances Int     @default(1) @map("max_instances")
+
+  /// Bloqueio comercial: para o agente e o envio sem apagar nada.
+  blocked       Boolean   @default(false)
+  blockedReason String?   @map("blocked_reason")
+  blockedAt     DateTime? @map("blocked_at")
+
+  // -- Financeiro (espelho do Conta Azul) -----------------------------------
+  billingStatus   StatusCobranca @default(EM_DIA) @map("billing_status")
+  /// Nota fiscal do período corrente já emitida.
+  invoiceIssued   Boolean        @default(false) @map("invoice_issued")
+  lastInvoiceAt   DateTime?      @map("last_invoice_at")
+  /// Quando o espelho foi atualizado — à mão hoje, pelo Conta Azul depois.
+  billingSyncedAt DateTime?      @map("billing_synced_at")
+  /// ID do cliente no Conta Azul, chave da futura sincronização.
+  contaAzulId     String?        @map("conta_azul_id")
+  notes           String?
+
+  users     User[]
+  apiKeys   AgentApiKey[]
+  students  Student[]
+  guardians Guardian[]
+  events    AccessEvent[]
+  templates MessageTemplate[]
+  settings  SchoolSettings?
+  instances WhatsappInstance[]
+
+  @@map("schools")
+}
+
+/**
+ * Um chip da escola. Cada linha é uma instância na UAZAPI, criada quando
+ * alguém lê o QR code no painel. O teto é School.maxInstances.
+ */
+model WhatsappInstance {
+  id          String    @id @default(uuid())
+  schoolId    String    @map("school_id")
+  /// Nome na UAZAPI (notifica-<escola>-<id curto>-<n>).
+  name        String
+  /// ID da instância no provedor.
+  externalId  String?   @map("external_id")
+  baseUrl     String    @map("base_url")
+  /// Token da instância. Nunca sai da API.
+  token       String
+  /// disconnected | connecting | connected | hibernated
+  status      String    @default("disconnected")
+  phone       String?
+  profileName String?   @map("profile_name")
+  label       String?
+  connectedAt DateTime? @map("connected_at")
+  /// Rodízio de envio: usamos sempre o chip parado há mais tempo.
+  lastUsedAt  DateTime? @map("last_used_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@unique([schoolId, name])
+  @@index([schoolId, status])
+  @@map("whatsapp_instances")
+}
+
+model User {
+  id           String  @id @default(uuid())
+  // schoolId nulo = admin interno.
+  schoolId     String? @map("school_id")
+  name         String
+  email        String  @unique
+  passwordHash String  @map("password_hash")
+  role         String  @default("school")
+
+  school School? @relation(fields: [schoolId], references: [id])
+
+  @@map("users")
+}
+
+model AgentApiKey {
+  id         String    @id @default(uuid())
+  schoolId   String    @map("school_id")
+  // sha256 hex da chave; a chave em claro só aparece uma vez, no onboarding.
+  keyHash    String    @unique @map("key_hash")
+  label      String    @default("agente")
+  lastSeenAt DateTime? @map("last_seen_at")
+  // Último heartbeat completo (cursor, pendentes, db_ok...), para o painel.
+  lastStatus Json?     @map("last_status")
+  /// Quando avisamos que este agente ficou mudo. Limpo no próximo heartbeat,
+  /// para o alerta não repetir a cada varredura nem sumir sem o agente voltar.
+  alertedAt  DateTime? @map("alerted_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@map("agent_api_keys")
+}
+
+model Student {
+  id         String   @id @default(uuid())
+  schoolId   String   @map("school_id")
+  // ID no banco da catraca (Marcacao.CodigoPessoa) ou "cartao:<n>" para
+  // marcação de cartão sem pessoa vinculada.
+  externalId String   @map("external_id")
+  name       String
+  className  String?  @map("class_name")
+  card       String?
+  active     Boolean  @default(true)
+  syncedAt   DateTime @default(now()) @map("synced_at")
+
+  school    School            @relation(fields: [schoolId], references: [id])
+  guardians StudentGuardian[]
+  events    AccessEvent[]
+
+  @@unique([schoolId, externalId])
+  @@map("students")
+}
+
+model Guardian {
+  id        String    @id @default(uuid())
+  schoolId  String    @map("school_id")
+  name      String
+  phoneE164 String    @map("phone_e164")
+  relation  String?
+  optInAt   DateTime? @map("opt_in_at")
+  optOutAt  DateTime? @map("opt_out_at")
+
+  school   School            @relation(fields: [schoolId], references: [id])
+  students StudentGuardian[]
+  messages Message[]
+
+  @@map("guardians")
+}
+
+model StudentGuardian {
+  studentId   String  @map("student_id")
+  guardianId  String  @map("guardian_id")
+  notifyEntry Boolean @default(true) @map("notify_entry")
+  notifyExit  Boolean @default(true) @map("notify_exit")
+  isPrimary   Boolean @default(false) @map("is_primary")
+
+  student  Student  @relation(fields: [studentId], references: [id])
+  guardian Guardian @relation(fields: [guardianId], references: [id])
+
+  @@id([studentId, guardianId])
+  @@map("student_guardians")
+}
+
+model AccessEvent {
+  id              String    @id @default(uuid())
+  schoolId        String    @map("school_id")
+  studentId       String    @map("student_id")
+  // Chave natural vinda do agente: Inners|Complemento|Cartao|DataHora.
+  // O unique abaixo é o que torna o reenvio do agente idempotente.
+  externalEventId String    @map("external_event_id")
+  direction       Direction
+  occurredAt      DateTime  @map("occurred_at")
+  receivedAt      DateTime  @default(now()) @map("received_at")
+  card            String?
+  deviceId        String?   @map("device_id")
+  locationId      String?   @map("location_id")
+
+  school   School    @relation(fields: [schoolId], references: [id])
+  student  Student   @relation(fields: [studentId], references: [id])
+  messages Message[]
+
+  @@unique([schoolId, externalEventId])
+  @@index([schoolId, occurredAt])
+  @@map("access_events")
+}
+
+model Message {
+  id                String        @id @default(uuid())
+  accessEventId     String        @map("access_event_id")
+  guardianId        String        @map("guardian_id")
+  provider          String
+  status            MessageStatus @default(QUEUED)
+  providerMessageId String?       @map("provider_message_id")
+  attempts          Int           @default(0)
+  error             String?
+  sentAt            DateTime?     @map("sent_at")
+  deliveredAt       DateTime?     @map("delivered_at")
+  createdAt         DateTime      @default(now()) @map("created_at")
+
+  accessEvent AccessEvent @relation(fields: [accessEventId], references: [id])
+  guardian    Guardian    @relation(fields: [guardianId], references: [id])
+
+  // Uma mensagem por (evento, responsável): retry do job de notificação
+  // nunca duplica o disparo.
+  @@unique([accessEventId, guardianId])
+  @@map("messages")
+}
+
+model MessageTemplate {
+  id        String    @id @default(uuid())
+  schoolId  String    @map("school_id")
+  eventType Direction @map("event_type")
+  // Variáveis: {responsavel} {aluno} {hora} {escola}
+  body      String
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@unique([schoolId, eventType])
+  @@map("message_templates")
+}
+
+model SchoolSettings {
+  schoolId       String  @id @map("school_id")
+  dedupeMinutes  Int     @default(3) @map("dedupe_minutes")
+  windowStart    String  @default("06:00") @map("window_start")
+  windowEnd      String  @default("19:30") @map("window_end")
+  notifyWeekends Boolean @default(false) @map("notify_weekends")
+
+  school School @relation(fields: [schoolId], references: [id])
+
+  @@map("school_settings")
+}

@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+.git
+.devdb
+**/.devdb
+*.env
+.env
+CREDENCIAIS.md
+apps/agent
+**/*.tsbuildinfo
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,92 @@
+# Conecta Notifica — agente da escola
+# Copie para config.yaml, ao lado do executável, e ajuste.
+
+escola:
+  nome: "Colégio Exemplo"
+  timezone: America/Sao_Paulo   # como interpretar o DataHora da catraca
+
+banco:
+  servidor: "localhost"
+  porta: 1433
+  instancia: ""                 # ex.: SQLEXPRESS (deixe porta vazia se usar instância)
+  database: "PontoAcesso"
+  usuario: "notifica_ro"        # usuário SOMENTE LEITURA — ver README
+  senha: "troque-aqui"
+  criptografia: "disable"       # disable | true | false
+  confiar_no_certificado: false
+  timeout_segundos: 15
+  # dsn: "sqlserver://..."      # sobrescreve tudo acima, se preferir
+
+saas:
+  # Endereço fixo do SaaS. O nome é "painel" porque "notifica" continua preso
+  # à CDN da Hostinger; o endereço da VPS
+  # (https://notifica.srv1172775.hstgr.cloud/api) também responde.
+  base_url: "https://painel.conectapontoeacesso.com.br/api"
+  api_key: "chave-da-escola"
+  lote_max: 200
+  envio_segundos: 5
+  heartbeat_segundos: 60
+  timeout_segundos: 20
+
+coleta:
+  intervalo_segundos: 7
+  limite_por_ciclo: 500
+
+  # auto  -> usa Marcacao.Codigo se ele for IDENTITY, senão DataHora
+  # codigo -> cursor por Marcacao.Codigo (preferido: pega marcação atrasada)
+  # datahora -> cursor por Marcacao.DataHora (liga a varredura abaixo)
+  cursor: auto
+
+  # Layout Go do varchar(12) de DataHora. 060102150405 = YYMMDDHHMMSS.
+  # Confirme com `notifica-agent descobrir` antes de subir.
+  formato_datahora: "060102150405"
+
+  # agora | tudo | 2026-08-01 | 2026-08-01T07:00:00
+  inicio_em: agora
+
+  # Só usado no cursor por datahora: relê a janela recente atrás de marcações
+  # que o equipamento descarregou com atraso.
+  varredura_minutos: 10
+  varredura_horas: 6
+
+  # Descarta marcação mais velha que N dias (0 = desligado). Protege contra
+  # avisar responsável sobre entrada de ontem depois de um recadastro.
+  ignorar_antes_de_dias: 2
+
+direcao:
+  # Marcacao.Complemento registra o sentido do giro: 1 = entrada, 0 = saída.
+  # Esse é o padrão do agente — a seção inteira pode ser omitida.
+  # Outros modos, se alguma instalação divergir: fixo | local (CodigoLocal) |
+  # inner (equipamento) | origem. Rode `descobrir` para conferir.
+  modo: complemento
+  padrao: in
+  descartar_sem_mapa: false
+  mapa:
+    "1": in
+    "0": out
+    # "2": ignorar   # valor inesperado que não deve notificar
+
+consultas:
+  # Sincroniza o cadastro para o SaaS resolver aluno -> responsáveis.
+  # O nome da tabela de pessoas varia por instalação: rode `descobrir` e ajuste.
+  # Colunas aceitas: external_id/codigo, nome, turma, cartao, ativo.
+  sincronizar_alunos: false
+  intervalo_alunos_minutos: 60
+  alunos: |
+    SELECT p.Codigo AS external_id,
+           p.Nome   AS nome,
+           ''       AS turma,
+           1        AS ativo
+      FROM dbo.Pessoas AS p WITH (NOLOCK)
+
+  # Sobrescreve a consulta de marcações. Precisa aceitar @limite e @cursor e
+  # devolver as colunas Codigo, CodigoPessoa, Inners, Origem, Complemento,
+  # Cartao, DataHora, CodigoLocal (e opcionalmente Nome).
+  eventos: ""
+
+armazenamento:
+  diretorio: dados      # fila local, cursor e cache de deduplicação
+
+log:
+  nivel: info           # debug | info | warn | error
+  arquivo: logs/agente.log

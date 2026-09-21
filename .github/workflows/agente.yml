@@ -1,0 +1,95 @@
+# Compila o agente e gera o instalador do Windows.
+#
+# Existe porque o instalador só compila em Windows (Inno Setup) e o Go não
+# roda na máquina de desenvolvimento — este workflow é o que verifica e
+# publica o .exe que a escola baixa.
+name: Agente Windows
+
+on:
+  push:
+    branches: [main]
+    paths: ['apps/agent/**', '.github/workflows/agente.yml']
+  # Publicar uma release anexa o instalador nela. Não dá para usar `tags`
+  # junto de `paths` aqui: o filtro de caminho valeria para a tag também, e
+  # uma tag em commit que não toca o agente não geraria instalador nenhum.
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  testar:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: apps/agent/go.sum
+      - run: go vet ./...
+      - run: go test ./...
+
+  instalador:
+    needs: testar
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: apps/agent
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: apps/agent/go.sum
+
+      - name: Versão
+        id: versao
+        run: |
+          $v = git describe --tags --always 2>$null
+          if (-not $v) { $v = "0.0.0-dev" }
+          $v = $v -replace '^v',''
+          "versao=$v" >> $env:GITHUB_OUTPUT
+
+      # Sem -s -w de propósito: binário com símbolos dispara bem menos falso
+      # positivo no Defender/SmartScreen (mesma razão do Makefile).
+      - name: Gerar recursos do Windows
+        run: |
+          Push-Location cmd/agent
+          go run github.com/josephspurrier/goversioninfo/cmd/goversioninfo@v1.5.0 -64 -o resource_windows_amd64.syso versioninfo.json
+          Pop-Location
+
+      - name: Compilar o agente
+        env:
+          GOOS: windows
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: go build -ldflags "-H=windowsgui -X main.Versao=${{ steps.versao.outputs.versao }}" -o bin/notifica-agent.exe ./cmd/agent
+
+      - name: Instalar o Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Gerar o instalador
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DVersao=${{ steps.versao.outputs.versao }} `
+            instalador\conecta-notifica.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConectaNotifica-Agente-${{ steps.versao.outputs.versao }}
+          path: apps/agent/dist/*.exe
+          if-no-files-found: error
+
+      - name: Anexar à release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apps/agent/dist/*.exe
