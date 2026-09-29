@@ -1,11 +1,53 @@
 package fila
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/conecta/notifica-agent/internal/modelo"
 )
+
+func TestAbrirMigraCheckpointLegado(t *testing.T) {
+	dir := t.TempDir()
+	legado := Estado{Cursor: "42", Offset: 17, Enfileirados: 9, Enviados: 8, UltimoEvento: "2026-09-28T10:00:00-03:00"}
+	b, err := json.Marshal(legado)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "estado.json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Abrir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Fechar()
+	if got := f.Estado(); got != legado {
+		t.Fatalf("checkpoint legado não foi preservado: got %+v, want %+v", got, legado)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fila-estado.json")); err != nil {
+		t.Fatalf("checkpoint novo não foi criado: %v", err)
+	}
+}
+
+func TestNaoInterpretaEstadoDeSaudeComoCheckpoint(t *testing.T) {
+	dir := t.TempDir()
+	saude := `{"em":"2026-09-28T13:00:00-03:00","banco_ok":true,"saas_ok":true}`
+	if err := os.WriteFile(filepath.Join(dir, "estado.json"), []byte(saude), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := Abrir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Fechar()
+	if got := f.Estado(); got.Cursor != "" || got.Offset != 0 || got.Enfileirados != 0 || got.Enviados != 0 {
+		t.Fatalf("estado de saúde foi tratado como checkpoint: %+v", got)
+	}
+}
 
 func ev(id string) modelo.Evento {
 	return modelo.Evento{IDExterno: id, Direcao: "in", OcorridoEm: time.Now().Truncate(time.Second)}

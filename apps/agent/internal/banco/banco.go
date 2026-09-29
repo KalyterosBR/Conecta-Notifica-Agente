@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -99,6 +100,11 @@ func (r *Repo) MaiorCodigo(ctx context.Context) (string, error) {
 // BuscarMarcacoes lê uma página de marcações a partir do cursor.
 func (r *Repo) BuscarMarcacoes(ctx context.Context, cursor string, limite int) ([]modelo.Marcacao, error) {
 	consulta := strings.TrimSpace(r.cfg.Consultas.Eventos)
+	if consulta != "" {
+		if err := validarConsultaSomenteLeitura(consulta); err != nil {
+			return nil, fmt.Errorf("consulta de eventos: %w", err)
+		}
+	}
 	modo := r.ModoCursor(ctx)
 	if consulta == "" {
 		if modo == "codigo" {
@@ -177,6 +183,9 @@ func (r *Repo) BuscarAlunos(ctx context.Context) ([]modelo.Aluno, error) {
 	if consulta == "" {
 		return nil, nil
 	}
+	if err := validarConsultaSomenteLeitura(consulta); err != nil {
+		return nil, fmt.Errorf("consulta de alunos: %w", err)
+	}
 	rows, err := r.db.QueryContext(ctx, consulta)
 	if err != nil {
 		return nil, fmt.Errorf("consultando alunos: %w", err)
@@ -219,6 +228,126 @@ func (r *Repo) BuscarAlunos(ctx context.Context) ([]modelo.Aluno, error) {
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// ConsultaAlunosSugerida descobre a tabela ligada a Marcacao.CodigoPessoa e
+// monta um SELECT somente de leitura quando o esquema tem Codigo e Nome.
+// Não interpreta colunas de validade: nesses casos pede revisão explícita.
+func (r *Repo) ConsultaAlunosSugerida(ctx context.Context) (string, string, error) {
+	var schema, tabela string
+	err := r.db.QueryRowContext(ctx, `
+SELECT TOP (1) rs.name, rt.name
+  FROM sys.foreign_keys fk
+  JOIN sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+  JOIN sys.columns pc ON pc.object_id = fkc.parent_object_id AND pc.column_id = fkc.parent_column_id
+  JOIN sys.tables rt ON rt.object_id = fkc.referenced_object_id
+  JOIN sys.schemas rs ON rs.schema_id = rt.schema_id
+ WHERE fk.parent_object_id = OBJECT_ID(N'dbo.Marcacao')
+   AND pc.name = N'CodigoPessoa'
+ ORDER BY CASE WHEN rs.name = N'dbo' AND rt.name = N'Pessoas' THEN 0 ELSE 1 END, rs.name, rt.name`).Scan(&schema, &tabela)
+	if err != nil {
+		// Algumas instalações não declaram a FK. Só usamos dbo.Pessoas se ela
+		// existir; caso contrário, pedimos descoberta/manual sem inventar tabela.
+		err = r.db.QueryRowContext(ctx, `SELECT s.name, t.name FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id WHERE s.name=N'dbo' AND t.name=N'Pessoas'`).Scan(&schema, &tabela)
+		if err != nil {
+			return "", "Não encontrei tabela referenciada pela FK de Marcacao.CodigoPessoa nem dbo.Pessoas.", fmt.Errorf("não foi possível identificar a tabela de pessoas: %w", err)
+		}
+	}
+
+	rows, err := r.db.QueryContext(ctx, `
+SELECT c.name FROM sys.columns c
+JOIN sys.tables t ON t.object_id=c.object_id
+JOIN sys.schemas s ON s.schema_id=t.schema_id
+WHERE s.name=@schema AND t.name=@tabela`, sql.Named("schema", schema), sql.Named("tabela", tabela))
+	if err != nil {
+		return "", "", fmt.Errorf("lendo colunas do cadastro: %w", err)
+	}
+	defer rows.Close()
+	colunas := map[string]string{}
+	for rows.Next() {
+		var nome string
+		if err := rows.Scan(&nome); err != nil {
+			return "", "", err
+		}
+		colunas[strings.ToLower(nome)] = nome
+	}
+	if err := rows.Err(); err != nil {
+		return "", "", err
+	}
+	pegar := func(opcoes ...string) string {
+		for _, op := range opcoes {
+			if v := colunas[strings.ToLower(op)]; v != "" {
+				return v
+			}
+		}
+		return ""
+	}
+	codigo, nome := pegar("Codigo", "Id", "IDPessoa", "CodigoPessoa"), pegar("Nome", "NomeCompleto", "Pessoa")
+	if codigo == "" || nome == "" {
+		return "", "", fmt.Errorf("a tabela %s.%s não tem colunas reconhecidas para identificador e nome; revise o esquema manualmente", schema, tabela)
+	}
+	ident := func(v string) string { return "[" + strings.ReplaceAll(v, "]", "]]" ) + "]" }
+	// Evita interpretar Status/validade de forma ambígua. Uma coluna Ativo
+	// explícita pode ser mapeada; demais casos mantêm active=1 para revisão.
+	campos := []string{"p." + ident(codigo) + " AS external_id", "p." + ident(nome) + " AS nome"}
+	if turma := pegar("Turma", "Departamento", "Setor"); turma != "" {
+		campos = append(campos, "p."+ident(turma)+" AS turma")
+	} else {
+		campos = append(campos, "'' AS turma")
+	}
+	if cartao := pegar("Cartao", "Cartão"); cartao != "" {
+		campos = append(campos, "p."+ident(cartao)+" AS cartao")
+	} else {
+		campos = append(campos, "'' AS cartao")
+	}
+	if ativo := pegar("Ativo"); ativo != "" {
+		campos = append(campos, "p."+ident(ativo)+" AS ativo")
+	} else {
+		campos = append(campos, "1 AS ativo")
+	}
+	consulta := "SELECT " + strings.Join(campos, ",\n       ") + "\n  FROM " + ident(schema) + "." + ident(tabela) + " AS p"
+	aviso := fmt.Sprintf("Tabela reconhecida: %s.%s. Revise a regra de validade antes de ativar sincronização automática.", schema, tabela)
+	if pegar("DataInicio") != "" || pegar("DataFim") != "" || pegar("ControlaValidade") != "" {
+		aviso += " Foram encontradas colunas de validade, cuja interpretação não será presumida."
+	}
+	return consulta, aviso, nil
+}
+
+// ValidarConsultaAlunosCompilacao confirma permissões e colunas sem retornar
+// dados de pessoas: TOP (0) compila a consulta e não entrega linhas.
+func (r *Repo) ValidarConsultaAlunosCompilacao(ctx context.Context, consulta string) error {
+	if err := validarConsultaSomenteLeitura(consulta); err != nil {
+		return err
+	}
+	rows, err := r.db.QueryContext(ctx, "SELECT TOP (0) * FROM ("+consulta+") AS consulta_alunos_validacao")
+	if err != nil {
+		return fmt.Errorf("validando consulta sem ler registros: %w", err)
+	}
+	return rows.Close()
+}
+
+var palavrasDeEscrita = regexp.MustCompile(`(?i)\b(insert|update|delete|merge|exec|execute|into|create|alter|drop|truncate|grant|revoke|deny|backup|restore|dbcc)\b`)
+
+// validarConsultaSomenteLeitura limita as consultas configuráveis a um único
+// SELECT simples. O usuário SQL deve continuar com permissão somente de
+// leitura; esta validação é uma segunda barreira contra SQL de escrita.
+func validarConsultaSomenteLeitura(consulta string) error {
+	consulta = strings.TrimSpace(consulta)
+	if !strings.HasPrefix(strings.ToLower(consulta), "select ") {
+		return fmt.Errorf("somente uma consulta SELECT é permitida")
+	}
+	if strings.ContainsAny(consulta, ";") || strings.Contains(consulta, "--") || strings.Contains(consulta, "/*") || strings.Contains(consulta, "*/") {
+		return fmt.Errorf("a consulta não pode conter comandos múltiplos nem comentários SQL")
+	}
+	if palavrasDeEscrita.MatchString(consulta) {
+		return fmt.Errorf("a consulta contém palavra reservada que não é permitida em leitura")
+	}
+	return nil
+}
+
+// ValidarConsultaSomenteLeitura valida SQL configurável sem abrir conexão.
+func ValidarConsultaSomenteLeitura(consulta string) error {
+	return validarConsultaSomenteLeitura(consulta)
 }
 
 // CodigoDesde devolve o Codigo imediatamente anterior à primeira marcação com

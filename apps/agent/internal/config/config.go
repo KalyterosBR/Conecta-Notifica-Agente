@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -158,6 +159,75 @@ func Carregar(caminho string) (*Config, error) {
 		return nil, err
 	}
 	return &c, nil
+}
+
+// SalvarConsultaAlunos atualiza somente consultas.alunos no YAML instalado,
+// preservando as demais opções e sem imprimir nem retornar segredos.
+func SalvarConsultaAlunos(caminho, consulta string) error {
+	conteudo, err := os.ReadFile(caminho)
+	if err != nil {
+		return fmt.Errorf("lendo configuração: %w", err)
+	}
+	var raiz yaml.Node
+	if err := yaml.Unmarshal(conteudo, &raiz); err != nil {
+		return fmt.Errorf("lendo YAML: %w", err)
+	}
+	if len(raiz.Content) == 0 || raiz.Content[0].Kind != yaml.MappingNode {
+		return fmt.Errorf("configuração YAML vazia ou inválida")
+	}
+	mapa := raiz.Content[0]
+	acha := func(no *yaml.Node, chave string) *yaml.Node {
+		for i := 0; i+1 < len(no.Content); i += 2 {
+			if no.Content[i].Value == chave {
+				return no.Content[i+1]
+			}
+		}
+		return nil
+	}
+	consultas := acha(mapa, "consultas")
+	if consultas == nil {
+		consultas = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		mapa.Content = append(mapa.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "consultas"}, consultas)
+	}
+	if consultas.Kind != yaml.MappingNode {
+		return fmt.Errorf("a seção consultas não é um mapa YAML")
+	}
+	noConsulta := acha(consultas, "alunos")
+	if noConsulta == nil {
+		noConsulta = &yaml.Node{}
+		consultas.Content = append(consultas.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: "alunos"}, noConsulta)
+	}
+	*noConsulta = yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Style: yaml.LiteralStyle, Value: strings.TrimSpace(consulta)}
+	resultado, err := yaml.Marshal(&raiz)
+	if err != nil {
+		return fmt.Errorf("serializando configuração: %w", err)
+	}
+	dir := filepath.Dir(caminho)
+	tmp, err := os.CreateTemp(dir, ".config-alunos-*.tmp")
+	if err != nil {
+		return fmt.Errorf("criando arquivo temporário: %w", err)
+	}
+	tmpNome := tmp.Name()
+	defer os.Remove(tmpNome)
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(resultado); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpNome, caminho); err != nil {
+		return fmt.Errorf("atualizando configuração: %w", err)
+	}
+	return nil
 }
 
 func (c *Config) padroes() {

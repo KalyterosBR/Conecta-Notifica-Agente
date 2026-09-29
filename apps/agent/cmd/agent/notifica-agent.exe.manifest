@@ -5,8 +5,9 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges>
-        <!-- Pede elevação pelo caminho oficial (UAC), sem truques de script -->
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false"/>
+        <!-- O núcleo pode iniciar o monitor na sessão do usuário sem UAC.
+             A Central C# continua requireAdministrator para operações no serviço. -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
       </requestedPrivileges>
     </security>
   </trustInfo>

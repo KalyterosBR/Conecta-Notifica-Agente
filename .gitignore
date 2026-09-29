@@ -18,6 +18,8 @@ CREDENCIAIS.md
 # Binários e pacotes do agente Go (gerados: make windows / zip do dist)
 apps/agent/bin/
 apps/agent/dist/
+apps/agent/gui/bin/
+apps/agent/gui/obj/
 apps/agent.zip
 *.exe
 *.msi

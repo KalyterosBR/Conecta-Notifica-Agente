@@ -1,372 +1,127 @@
 //go:build windows
 
-// Package painel contém uma central Win32 pequena, sem CGO e sem dependências
-// visuais externas. O agente continua sendo um único executável para facilitar
-// a instalação em máquinas de escola.
+// Package painel expõe a central local do agente. A interface usa o navegador
+// já instalado no Windows, evitando uma segunda implementação frágil de loop
+// gráfico dentro do executável.
 package painel
 
 import (
+	"encoding/json"
+	"fmt"
+	"net"
+	"net/http"
 	"sync"
-	"syscall"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
 
-const (
-	classeJanela = "ConectaNotificaPainel"
-	titulo       = "Conecta Notifica — Agente"
-
-	wsOverlappedWindow = 0x00CF0000
-	wsVisible          = 0x10000000
-	wsChild            = 0x40000000
-	wsTabStop          = 0x00010000
-	wsBorder           = 0x00800000
-	ssLeft             = 0x00000000
-	ssNotify           = 0x00000100
-	bsPushButton       = 0x00000000
-
-	wmDestroy = 0x0002
-	wmCommand = 0x0111
-	wmTimer   = 0x0113
-
-	mbOK              = 0x00000000
-	mbIconInformation = 0x00000040
-	mbIconError       = 0x00000010
-
-	idTestar      = 1001
-	idIniciar     = 1002
-	idParar       = 1003
-	idInstalar    = 1004
-	idConfig      = 1005
-	idDiagnostico = 1006
-	idPasta       = 1007
-	idTimer       = 1
-)
-
 var (
-	user32   = windows.NewLazySystemDLL("user32.dll")
-	kernel32 = windows.NewLazySystemDLL("kernel32.dll")
-
-	procRegisterClassEx = user32.NewProc("RegisterClassExW")
-	procCreateWindowEx  = user32.NewProc("CreateWindowExW")
-	procDefWindowProc   = user32.NewProc("DefWindowProcW")
-	procGetMessage      = user32.NewProc("GetMessageW")
-	procTranslateMsg    = user32.NewProc("TranslateMessage")
-	procDispatchMessage = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage = user32.NewProc("PostQuitMessage")
-	procSetWindowText   = user32.NewProc("SetWindowTextW")
-	procMessageBox      = user32.NewProc("MessageBoxW")
-	procSetTimer        = user32.NewProc("SetTimer")
-	procGetDpiForSystem = user32.NewProc("GetDpiForSystem")
-
-	procGetModuleHandle = kernel32.NewProc("GetModuleHandleW")
+	shell32      = windows.NewLazySystemDLL("shell32.dll")
+	shellExecute = shell32.NewProc("ShellExecuteW")
 )
 
-type ponto struct{ X, Y int32 }
-
-type mensagem struct {
-	Hwnd    windows.HWND
-	Message uint32
-	WParam  uintptr
-	LParam  uintptr
-	Time    uint32
-	Pt      ponto
+type central struct {
+	acoes   Acoes
+	mu      sync.Mutex
+	ocupado bool
 }
 
-type wndClassEx struct {
-	Size       uint32
-	Style      uint32
-	WndProc    uintptr
-	ClsExtra   int32
-	WndExtra   int32
-	Instance   windows.Handle
-	Icon       windows.Handle
-	Cursor     windows.Handle
-	Background windows.Handle
-	MenuName   *uint16
-	ClassName  *uint16
-	IconSm     windows.Handle
+type resposta struct {
+	OK       bool   `json:"ok"`
+	Mensagem string `json:"mensagem"`
 }
 
-type janela struct {
-	hwnd   windows.HWND
-	status windows.HWND
-	acoes  Acoes
-	dpi    int
-
-	mu        sync.Mutex
-	ocupado   bool
-	tituloJob string
-	resultado string
-	erro      error
-	concluido bool
-
-	atualizandoStatus bool
-	statusPronto      bool
-	statusPendente    string
-}
-
-var atual *janela
-
-// Rodar abre a central de operação. Nenhuma ação é disparada automaticamente:
-// iniciar, parar, testar e abrir arquivos sempre exigem um clique explícito.
+// Rodar inicia um servidor restrito ao próprio computador e abre a Central no
+// navegador padrão. Nenhuma porta fica exposta à rede da escola.
 func Rodar(acoes Acoes) error {
-	atual = &janela{acoes: acoes, dpi: dpiSistema()}
-	instancia, _, _ := procGetModuleHandle.Call(0)
-	nomeClasse, err := windows.UTF16PtrFromString(classeJanela)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		return fmt.Errorf("abrindo central local: %w", err)
+	}
+	c := &central{acoes: acoes}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", c.inicio)
+	mux.HandleFunc("/api/testar", c.comAcao(acoes.Testar))
+	mux.HandleFunc("/api/diagnostico", c.comAcao(acoes.GerarDiagnostico))
+	mux.HandleFunc("/api/iniciar", c.simples(acoes.IniciarServico, "Serviço iniciado."))
+	mux.HandleFunc("/api/parar", c.simples(acoes.PararServico, "Serviço parado."))
+	mux.HandleFunc("/api/reparar", c.simples(acoes.InstalarServico, "Serviço instalado e iniciado."))
+	mux.HandleFunc("/api/configuracao", c.simples(acoes.AbrirConfiguracao, "Configuração aberta."))
+	mux.HandleFunc("/api/pasta", c.simples(acoes.AbrirPasta, "Pasta do agente aberta."))
+
+	url := "http://" + listener.Addr().String()
+	if err := abrirURL(url); err != nil {
+		_ = listener.Close()
 		return err
 	}
-	wc := wndClassEx{
-		Size: uint32(unsafe.Sizeof(wndClassEx{})), WndProc: syscall.NewCallback(wndProc),
-		Instance: windows.Handle(instancia), ClassName: nomeClasse,
-	}
-	if ret, _, err := procRegisterClassEx.Call(uintptr(unsafe.Pointer(&wc))); ret == 0 {
-		return err
-	}
-	nome, _ := windows.UTF16PtrFromString(titulo)
-	hwnd, _, err := procCreateWindowEx.Call(0, uintptr(unsafe.Pointer(nomeClasse)), uintptr(unsafe.Pointer(nome)),
-		wsOverlappedWindow|wsVisible, 0x80000000, 0x80000000, uintptr(atual.px(860)), uintptr(atual.px(585)), 0, 0, instancia, 0)
-	if hwnd == 0 {
-		return err
-	}
-	atual.hwnd = windows.HWND(hwnd)
-	atual.criarControles()
-	atual.atualizar()
-	// O timer só transfere resultados já preparados para a tela. A leitura de
-	// config/estado acontece em goroutine, portanto disco lento, antivírus ou
-	// arquivo momentaneamente ocupado nunca bloqueiam a janela.
-	procSetTimer.Call(hwnd, idTimer, 1000, 0)
+	return http.Serve(listener, mux)
+}
 
-	var msg mensagem
-	for {
-		ret, _, _ := procGetMessage.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
-		if int32(ret) <= 0 {
-			return nil
+func (c *central) inicio(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(pagina))
+}
+
+func (c *central) simples(acao func() error, sucesso string) http.HandlerFunc {
+	return c.comAcao(func() (string, error) {
+		if acao == nil {
+			return "", fmt.Errorf("ação indisponível")
 		}
-		procTranslateMsg.Call(uintptr(unsafe.Pointer(&msg)))
-		procDispatchMessage.Call(uintptr(unsafe.Pointer(&msg)))
-	}
-}
-
-func (j *janela) criarControles() {
-	j.texto("STATIC", "Conecta Notifica — Agente", 32, 26, 760, 30, ssLeft)
-	j.texto("STATIC", "Integração da catraca com o painel da escola", 32, 61, 760, 24, ssLeft)
-	j.texto("STATIC", "STATUS DO AGENTE", 32, 108, 760, 20, ssLeft)
-	j.status = j.texto("STATIC", "Carregando…", 32, 136, 760, 108, ssLeft|ssNotify|wsBorder)
-	j.botao("Testar conexões", idTestar, 32, 270, 220, 38)
-	j.botao("Iniciar serviço", idIniciar, 270, 270, 150, 38)
-	j.botao("Parar", idParar, 436, 270, 100, 38)
-	j.botao("Instalar/Reparar serviço", idInstalar, 552, 270, 240, 38)
-	j.texto("STATIC", "CONFIGURAÇÃO E SUPORTE", 32, 342, 760, 20, ssLeft)
-	j.botao("Abrir configuração", idConfig, 32, 370, 220, 38)
-	j.botao("Gerar diagnóstico seguro", idDiagnostico, 270, 370, 220, 38)
-	j.botao("Abrir pasta do agente", idPasta, 508, 370, 284, 38)
-	j.texto("STATIC", "O agente continua enviando normalmente mesmo quando esta janela está fechada.", 32, 476, 760, 20, ssLeft)
-}
-
-func (j *janela) texto(classe, texto string, x, y, largura, altura int, estilo uintptr) windows.HWND {
-	return j.controle(classe, texto, estilo, x, y, largura, altura, 0)
-}
-
-func (j *janela) botao(texto string, id, x, y, largura, altura int) {
-	j.controle("BUTTON", texto, bsPushButton|wsTabStop, x, y, largura, altura, uintptr(id))
-}
-
-func (j *janela) controle(classe, texto string, estilo uintptr, x, y, largura, altura int, id uintptr) windows.HWND {
-	c, _ := windows.UTF16PtrFromString(classe)
-	t, _ := windows.UTF16PtrFromString(texto)
-	h, _, _ := procCreateWindowEx.Call(0, uintptr(unsafe.Pointer(c)), uintptr(unsafe.Pointer(t)),
-		wsChild|wsVisible|estilo, uintptr(j.px(x)), uintptr(j.px(y)), uintptr(j.px(largura)), uintptr(j.px(altura)), uintptr(j.hwnd), id, 0, 0)
-	return windows.HWND(h)
-}
-
-func dpiSistema() int {
-	dpi, _, _ := procGetDpiForSystem.Call()
-	if dpi == 0 {
-		return 96
-	}
-	return int(dpi)
-}
-
-func (j *janela) px(valor int) int {
-	return (valor*j.dpi + 48) / 96
-}
-
-func wndProc(hwnd, msg, wparam, lparam uintptr) uintptr {
-	if atual == nil {
-		ret, _, _ := procDefWindowProc.Call(hwnd, msg, wparam, lparam)
-		return ret
-	}
-	switch uint32(msg) {
-	case wmTimer:
-		atual.atualizar()
-		return 0
-	case wmCommand:
-		switch uint16(wparam) {
-		case idTestar:
-			atual.executar("Teste de conexões", atual.acoes.Testar)
-		case idIniciar:
-			atual.executarSimples("Serviço iniciado", atual.acoes.IniciarServico)
-		case idParar:
-			atual.executarSimples("Serviço parado", atual.acoes.PararServico)
-		case idInstalar:
-			atual.executarSimples("Serviço instalado e iniciado", atual.acoes.InstalarServico)
-		case idConfig:
-			atual.executarSimples("Configuração aberta", atual.acoes.AbrirConfiguracao)
-		case idDiagnostico:
-			atual.executar("Diagnóstico", atual.acoes.GerarDiagnostico)
-		case idPasta:
-			atual.executarSimples("Pasta do agente aberta", atual.acoes.AbrirPasta)
+		if err := acao(); err != nil {
+			return "", err
 		}
-		return 0
-	case wmDestroy:
-		procPostQuitMessage.Call(0)
-		return 0
-	}
-	ret, _, _ := procDefWindowProc.Call(hwnd, msg, wparam, lparam)
-	return ret
-}
-
-func (j *janela) atualizar() {
-	j.mostrarConclusao()
-	if titulo, ocupado := j.jobEmAndamento(); ocupado {
-		j.definirStatus("Executando " + titulo + "… Aguarde; a janela continuará disponível.")
-		return
-	}
-	if resumo, pronto := j.consumirStatus(); pronto {
-		j.definirStatus(resumo)
-	}
-	j.atualizarStatusEmSegundoPlano()
-}
-
-func (j *janela) atualizarStatusEmSegundoPlano() {
-	j.mu.Lock()
-	if j.atualizandoStatus {
-		j.mu.Unlock()
-		return
-	}
-	j.atualizandoStatus = true
-	j.mu.Unlock()
-
-	go func() {
-		resumo := "Não foi possível ler o estado do agente. Use Testar conexões para o detalhe."
-		if j.acoes.Resumo != nil {
-			resumo = j.acoes.Resumo()
-		}
-		j.mu.Lock()
-		j.statusPendente = resumo
-		j.statusPronto = true
-		j.atualizandoStatus = false
-		j.mu.Unlock()
-	}()
-}
-
-func (j *janela) consumirStatus() (string, bool) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if !j.statusPronto {
-		return "", false
-	}
-	resumo := j.statusPendente
-	j.statusPronto = false
-	return resumo, true
-}
-
-func (j *janela) executar(titulo string, acao func() (string, error)) {
-	if acao == nil {
-		return
-	}
-	if !j.iniciarJob(titulo) {
-		j.alerta("Ação em andamento", "Aguarde a conclusão de "+j.tituloAtual()+" antes de iniciar outra ação.", false)
-		return
-	}
-	j.definirStatus("Executando " + titulo + "… Aguarde; a janela continuará disponível.")
-	go func() {
-		mensagem, err := acao()
-		j.finalizarJob(mensagem, err)
-	}()
-}
-
-func (j *janela) executarSimples(sucesso string, acao func() error) {
-	if acao == nil {
-		return
-	}
-	j.executar(sucesso, func() (string, error) {
-		return sucesso, acao()
+		return sucesso, nil
 	})
 }
 
-func (j *janela) iniciarJob(titulo string) bool {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	if j.ocupado {
-		return false
+func (c *central) comAcao(acao func() (string, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		c.mu.Lock()
+		if c.ocupado {
+			c.mu.Unlock()
+			c.enviar(w, false, "Já existe uma ação em andamento. Aguarde a conclusão.")
+			return
+		}
+		c.ocupado = true
+		c.mu.Unlock()
+		defer func() {
+			c.mu.Lock()
+			c.ocupado = false
+			c.mu.Unlock()
+		}()
+		if acao == nil {
+			c.enviar(w, false, "Ação indisponível.")
+			return
+		}
+		texto, err := acao()
+		if err != nil {
+			c.enviar(w, false, err.Error())
+			return
+		}
+		c.enviar(w, true, texto)
 	}
-	j.ocupado = true
-	j.tituloJob = titulo
-	j.resultado = ""
-	j.erro = nil
-	j.concluido = false
-	return true
 }
 
-func (j *janela) finalizarJob(resultado string, err error) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	j.resultado = resultado
-	j.erro = err
-	j.concluido = true
+func (c *central) enviar(w http.ResponseWriter, ok bool, texto string) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(w).Encode(resposta{OK: ok, Mensagem: texto})
 }
 
-func (j *janela) jobEmAndamento() (string, bool) {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.tituloJob, j.ocupado
-}
-
-func (j *janela) tituloAtual() string {
-	j.mu.Lock()
-	defer j.mu.Unlock()
-	return j.tituloJob
-}
-
-// mostrarConclusao é chamado pela thread da janela através do timer. A
-// goroutine da operação nunca chama APIs visuais, evitando congelamento e
-// problemas de afinidade de thread no Win32.
-func (j *janela) mostrarConclusao() bool {
-	j.mu.Lock()
-	if !j.concluido {
-		j.mu.Unlock()
-		return false
-	}
-	titulo, resultado, err := j.tituloJob, j.resultado, j.erro
-	j.ocupado = false
-	j.concluido = false
-	j.mu.Unlock()
-
+func abrirURL(url string) error {
+	alvo, err := windows.UTF16PtrFromString(url)
 	if err != nil {
-		j.alerta(titulo, "Não foi possível concluir:\n\n"+err.Error(), true)
-	} else {
-		j.alerta(titulo, resultado, false)
+		return err
 	}
-	return true
+	operacao, _ := windows.UTF16PtrFromString("open")
+	ret, _, chamadaErr := shellExecute.Call(0, uintptr(unsafe.Pointer(operacao)), uintptr(unsafe.Pointer(alvo)), 0, 0, 1)
+	if ret <= 32 {
+		if chamadaErr != nil && chamadaErr != windows.ERROR_SUCCESS {
+			return chamadaErr
+		}
+		return fmt.Errorf("o Windows não conseguiu abrir a Central do Agente (código %d)", ret)
+	}
+	return nil
 }
 
-func (j *janela) definirStatus(texto string) {
-	p, err := windows.UTF16PtrFromString(texto)
-	if err == nil {
-		procSetWindowText.Call(uintptr(j.status), uintptr(unsafe.Pointer(p)))
-	}
-}
-
-func (j *janela) alerta(cabecalho, texto string, erro bool) {
-	t, _ := windows.UTF16PtrFromString(texto)
-	c, _ := windows.UTF16PtrFromString(cabecalho)
-	icone := uintptr(mbIconInformation)
-	if erro {
-		icone = mbIconError
-	}
-	procMessageBox.Call(uintptr(j.hwnd), uintptr(unsafe.Pointer(t)), uintptr(unsafe.Pointer(c)), mbOK|icone)
-}
+const pagina = `<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Conecta Notifica — Agente</title><style>body{margin:0;background:#f4f7fb;color:#122033;font:16px Segoe UI,Arial,sans-serif}.box{max-width:880px;margin:42px auto;padding:0 24px}h1{margin:0;font-size:28px}h2{font-size:14px;margin:28px 0 10px;color:#496079;letter-spacing:.06em}.sub{color:#60738a;margin-top:7px}.status{min-height:105px;white-space:pre-wrap;line-height:1.45;background:#fff;border:1px solid #dce4ef;border-radius:10px;padding:18px;box-shadow:0 2px 8px #17253a0d}.acoes{display:flex;gap:10px;flex-wrap:wrap}button{font:inherit;background:#0b67c2;color:#fff;border:0;border-radius:8px;padding:12px 16px;cursor:pointer}button.sec{background:#536579}button:hover{filter:brightness(.94)}button:disabled{opacity:.58;cursor:wait}.rodape{margin-top:34px;color:#60738a;font-size:13px}</style></head><body><main class="box"><h1>Conecta Notifica — Agente</h1><p class="sub">Integração da catraca com o painel da escola</p><h2>STATUS</h2><div id="status" class="status">Pronto. Escolha uma ação abaixo.</div><h2>OPERAÇÃO</h2><div class="acoes"><button data-api="testar">Testar conexões</button><button data-api="iniciar" class="sec">Iniciar serviço</button><button data-api="parar" class="sec">Parar serviço</button><button data-api="reparar" class="sec">Instalar/Reparar serviço</button></div><h2>CONFIGURAÇÃO E SUPORTE</h2><div class="acoes"><button data-api="configuracao" class="sec">Abrir configuração</button><button data-api="diagnostico" class="sec">Gerar diagnóstico seguro</button><button data-api="pasta" class="sec">Abrir pasta do agente</button></div><p class="rodape">Esta central é local e só funciona neste computador. Fechar esta aba não interrompe o serviço do agente.</p></main><script>const s=document.querySelector('#status'),bs=[...document.querySelectorAll('button')];for(const b of bs)b.onclick=async()=>{bs.forEach(x=>x.disabled=true);s.textContent='Executando '+b.textContent+'…';try{const r=await fetch('/api/'+b.dataset.api,{method:'POST'}),j=await r.json();s.textContent=(j.ok?'CONCLUÍDO\n':'NÃO CONCLUÍDO\n')+j.mensagem}catch(e){s.textContent='NÃO CONCLUÍDO\nNão foi possível falar com a central local: '+e}finally{bs.forEach(x=>x.disabled=false)}};</script></body></html>`

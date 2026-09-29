@@ -47,6 +47,23 @@ Ele imprime colunas, volume, amostras, os valores distintos de `Origem`,
 `dbo.Inners` e as tabelas candidatas ao cadastro. O mesmo está em
 [`scripts/descoberta.sql`](scripts/descoberta.sql) para rodar no SSMS.
 
+### Preparar a sincronização de alunos
+
+Na Central, use **Detectar consulta de alunos**. O agente procura a tabela
+referenciada por `dbo.Marcacao.CodigoPessoa`, reconhece colunas usuais de
+código, nome, turma e cartão, e valida o `SELECT` com `TOP (0)`. Essa validação
+confere esquema e permissão sem retornar nomes ou cartões. O comando grava a
+consulta apenas no `config.yaml`; não cria usuário, não concede permissões e
+não altera tabelas.
+
+A conta SQL precisa ter `SELECT` na tabela encontrada. Se não tiver, peça ao
+administrador do SQL Server para conceder somente a leitura necessária. A
+sincronização automática fica desligada até a escola revisar a regra de
+validade e clicar em **Sincronizar alunos agora** quando desejar. Se a
+instalação tiver campos como `DataInicio`, `DataFim` ou `ControlaValidade`, o
+agente não presume como interpretá-los: a regra deve ser confirmada antes da
+rotina periódica.
+
 ## Cursor: por que `Codigo` é melhor que `DataHora`
 
 Catraca que fica offline guarda as marcações e descarrega depois. Essas linhas

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,6 +35,8 @@ type Agente struct {
 	ultimoErro   string
 	enviadosHoje int64
 	diaContagem  string
+	ultimaLeitura time.Time
+	ultimoEnvio   time.Time
 }
 
 func Novo(cfg *config.Config, log *slog.Logger, repo *banco.Repo, f *fila.Fila, v *fila.Vistos, cli *api.Cliente) *Agente {
@@ -159,6 +162,7 @@ func (a *Agente) Coletar(ctx context.Context) error {
 			return err
 		}
 		a.definirBanco(true, nil)
+		a.marcarLeitura()
 		if len(linhas) == 0 {
 			return nil
 		}
@@ -283,6 +287,7 @@ func (a *Agente) Drenar(ctx context.Context) error {
 			return err
 		}
 		a.contarEnvio(int64(len(evs)))
+		a.marcarEnvio()
 		a.log.Info("lote enviado",
 			"eventos", len(evs), "aceitos", resp.Aceitos, "duplicados", resp.Duplicados,
 			"pendentes", a.fila.Pendentes())
@@ -291,17 +296,23 @@ func (a *Agente) Drenar(ctx context.Context) error {
 }
 
 func (a *Agente) SincronizarAlunos(ctx context.Context) error {
+	tentativa := time.Now()
+	a.gravarStatusSincronizacao(estado.Sincronizacao{TentativaEm: tentativa, Mensagem: "Sincronização em andamento."})
 	alunos, err := a.repo.BuscarAlunos(ctx)
 	if err != nil {
 		a.definirBanco(false, err)
+		a.gravarStatusSincronizacao(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Mensagem: "Falha ao consultar cadastros."})
 		return err
 	}
 	if len(alunos) == 0 {
+		a.gravarStatusSincronizacao(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Sucesso: true, Mensagem: "Consulta concluída; nenhum cadastro para enviar."})
 		return nil
 	}
 	if err := a.api.SincronizarAlunos(ctx, alunos, true); err != nil {
+		a.gravarStatusSincronizacao(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Quantidade: len(alunos), Mensagem: "Falha ao enviar cadastros ao painel."})
 		return err
 	}
+	a.gravarStatusSincronizacao(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Quantidade: len(alunos), Sucesso: true, Mensagem: "Cadastros enviados ao painel."})
 	a.log.Info("alunos sincronizados", "quantidade", len(alunos))
 	return nil
 }
@@ -339,7 +350,16 @@ func (a *Agente) publicarEstado(hb modelo.Heartbeat, ultimoEvento string) {
 	if a.cfg.Armazenamento.Diretorio == "" {
 		return
 	}
+	caminho := estado.Caminho(a.cfg.Armazenamento.Diretorio)
+	anterior, _ := estado.Ler(caminho)
 	a.mu.Lock()
+	ultimaLeitura, ultimoEnvio := a.ultimaLeitura, a.ultimoEnvio
+	if ultimaLeitura.IsZero() {
+		ultimaLeitura = anterior.UltimaLeitura
+	}
+	if ultimoEnvio.IsZero() {
+		ultimoEnvio = anterior.UltimoEnvio
+	}
 	e := estado.Estado{
 		Escola:       a.cfg.Escola.Nome,
 		BancoOK:      a.bancoOK,
@@ -348,10 +368,36 @@ func (a *Agente) publicarEstado(hb modelo.Heartbeat, ultimoEvento string) {
 		EnviadosHoje: a.enviadosHoje,
 		UltimoEvento: ultimoEvento,
 		UltimoErro:   a.ultimoErro,
+		UltimaLeitura: ultimaLeitura,
+		UltimoEnvio: ultimoEnvio,
+		SincronizacaoHabilitada: a.cfg.Consultas.SincronizarAlunos,
+		ConsultaAlunosConfigurada: strings.TrimSpace(a.cfg.Consultas.Alunos) != "",
+		IntervaloAlunosMinutos: a.cfg.Consultas.IntervaloAlunosMinuto,
 	}
 	a.mu.Unlock()
-	if err := estado.Gravar(estado.Caminho(a.cfg.Armazenamento.Diretorio), e); err != nil {
+	if err := estado.Gravar(caminho, e); err != nil {
 		a.log.Debug("não consegui publicar o estado", "erro", err)
+	}
+}
+
+func (a *Agente) marcarLeitura() {
+	a.mu.Lock()
+	a.ultimaLeitura = time.Now()
+	a.mu.Unlock()
+}
+
+func (a *Agente) marcarEnvio() {
+	a.mu.Lock()
+	a.ultimoEnvio = time.Now()
+	a.mu.Unlock()
+}
+
+func (a *Agente) gravarStatusSincronizacao(s estado.Sincronizacao) {
+	if a.cfg.Armazenamento.Diretorio == "" {
+		return
+	}
+	if err := estado.GravarSincronizacao(estado.CaminhoSincronizacao(a.cfg.Armazenamento.Diretorio), s); err != nil {
+		a.log.Debug("não consegui guardar o estado da sincronização de alunos", "erro", err)
 	}
 }
 

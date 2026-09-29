@@ -21,15 +21,30 @@ const Arquivo = "estado.json"
 const ArquivoIdentidade = "identidade.json"
 
 type Estado struct {
-	Em           time.Time `json:"em"`
-	Escola       string    `json:"escola"`
-	Versao       string    `json:"versao"`
-	BancoOK      bool      `json:"banco_ok"`
-	SaaSOK       bool      `json:"saas_ok"`
-	Pendentes    int       `json:"pendentes"`
-	EnviadosHoje int64     `json:"enviados_hoje"`
-	UltimoEvento string    `json:"ultimo_evento,omitempty"`
-	UltimoErro   string    `json:"ultimo_erro,omitempty"`
+	Em                          time.Time `json:"em"`
+	Escola                      string    `json:"escola"`
+	Versao                      string    `json:"versao"`
+	BancoOK                     bool      `json:"banco_ok"`
+	SaaSOK                      bool      `json:"saas_ok"`
+	Pendentes                   int       `json:"pendentes"`
+	EnviadosHoje                int64     `json:"enviados_hoje"`
+	UltimaLeitura               time.Time `json:"ultima_leitura,omitempty"`
+	UltimoEnvio                 time.Time `json:"ultimo_envio,omitempty"`
+	UltimoEvento                string    `json:"ultimo_evento,omitempty"`
+	SincronizacaoHabilitada     bool      `json:"sincronizacao_habilitada"`
+	ConsultaAlunosConfigurada   bool      `json:"consulta_alunos_configurada"`
+	IntervaloAlunosMinutos      int       `json:"intervalo_alunos_minutos,omitempty"`
+	UltimoErro                  string    `json:"ultimo_erro,omitempty"`
+}
+
+// Sincronizacao registra apenas metadados do último envio de alunos; nomes,
+// cartões e conteúdo da consulta nunca são gravados neste arquivo.
+type Sincronizacao struct {
+	TentativaEm time.Time `json:"tentativa_em,omitempty"`
+	ConcluidaEm time.Time `json:"concluida_em,omitempty"`
+	Quantidade  int       `json:"quantidade"`
+	Sucesso     bool      `json:"sucesso"`
+	Mensagem    string    `json:"mensagem,omitempty"`
 }
 
 type Identidade struct {
@@ -45,6 +60,10 @@ type Identidade struct {
 func Caminho(dirDados string) string { return filepath.Join(dirDados, Arquivo) }
 
 func CaminhoIdentidade(dirDados string) string { return filepath.Join(dirDados, ArquivoIdentidade) }
+
+func CaminhoSincronizacao(dirDados string) string {
+	return filepath.Join(dirDados, "sincronizacao-alunos.json")
+}
 
 // Gravar escreve de forma atômica: o ícone lê a cada poucos segundos e não
 // pode pegar meio arquivo.
@@ -96,6 +115,31 @@ func LerIdentidade(caminho string) (Identidade, error) {
 		return i, err
 	}
 	return i, json.Unmarshal(b, &i)
+}
+
+func GravarSincronizacao(caminho string, s Sincronizacao) error {
+	b, err := json.MarshalIndent(s, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(caminho), 0o755); err != nil {
+		return err
+	}
+	tmp := caminho + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, caminho)
+}
+
+func LerSincronizacao(caminho string) (Sincronizacao, error) {
+	var s Sincronizacao
+	b, err := os.ReadFile(caminho)
+	if err != nil {
+		return s, err
+	}
+	err = json.Unmarshal(b, &s)
+	return s, err
 }
 
 // Fresco diz se o estado ainda vale. Arquivo velho significa serviço parado —

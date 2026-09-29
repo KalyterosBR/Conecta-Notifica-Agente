@@ -43,7 +43,7 @@ func Abrir(dir string) (*Fila, error) {
 	f := &Fila{
 		dir:      dir,
 		arquivo:  filepath.Join(dir, "fila.jsonl"),
-		estadoFn: filepath.Join(dir, "estado.json"),
+		estadoFn: filepath.Join(dir, "fila-estado.json"),
 	}
 	if err := f.carregarEstado(); err != nil {
 		return nil, err
@@ -54,9 +54,10 @@ func Abrir(dir string) (*Fila, error) {
 	}
 	f.escrita = w
 
-	// Offset maior que o arquivo indica estado e fila fora de sincronia
-	// (arquivo apagado à mão, por exemplo). Recomeçamos do início do arquivo.
-	if st, err := w.Stat(); err == nil && f.estado.Offset > st.Size() {
+	// Offset maior que um arquivo existente indica estado e fila fora de
+	// sincronia. Se o arquivo ainda não existia, preservamos o checkpoint
+	// migrado: Abrir criou um arquivo vazio e não deve apagar seu progresso.
+	if st, err := w.Stat(); err == nil && st.Size() > 0 && f.estado.Offset > st.Size() {
 		f.estado.Offset = 0
 		_ = f.salvarEstado()
 	}
@@ -75,15 +76,44 @@ func (f *Fila) Fechar() error {
 func (f *Fila) carregarEstado() error {
 	b, err := os.ReadFile(f.estadoFn)
 	if os.IsNotExist(err) {
-		return nil
+		return f.migrarEstadoLegado()
 	}
 	if err != nil {
 		return fmt.Errorf("lendo estado: %w", err)
 	}
 	if err := json.Unmarshal(b, &f.estado); err != nil {
-		return fmt.Errorf("estado.json corrompido: %w", err)
+		return fmt.Errorf("fila-estado.json corrompido: %w", err)
 	}
 	return nil
+}
+
+// migrarEstadoLegado recupera o checkpoint antigo sem confundir o estado de
+// saúde (que também usava estado.json). O checkpoint da fila é reconhecido
+// pela presença dos campos próprios de offset/contadores; o arquivo legado
+// fica preservado como cópia de segurança.
+func (f *Fila) migrarEstadoLegado() error {
+	caminho := filepath.Join(f.dir, "estado.json")
+	b, err := os.ReadFile(caminho)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("lendo estado legado da fila: %w", err)
+	}
+	var campos map[string]json.RawMessage
+	if err := json.Unmarshal(b, &campos); err != nil {
+		return nil // não sobrescreve a inicialização por um arquivo alheio/corrompido
+	}
+	_, temOffset := campos["offset"]
+	_, temEnfileirados := campos["enfileirados"]
+	_, temEnviados := campos["enviados"]
+	if !temOffset || !temEnfileirados || !temEnviados {
+		return nil
+	}
+	if err := json.Unmarshal(b, &f.estado); err != nil {
+		return fmt.Errorf("estado legado da fila inválido: %w", err)
+	}
+	return f.salvarEstado()
 }
 
 // salvarEstado grava com temporário + rename para não deixar um estado

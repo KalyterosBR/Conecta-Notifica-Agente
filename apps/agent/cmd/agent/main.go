@@ -5,12 +5,13 @@ package main
 import (
 	"bufio"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -52,11 +53,16 @@ comandos:
                com servidor, instância, porta e banco preenchidos
   run          roda em primeiro plano
   instalar     registra como serviço do Windows
+	  reparar      reinstala e inicia o serviço usando a configuração atual
   desinstalar  remove o serviço
   iniciar      inicia o serviço
   parar        para o serviço
   status       mostra o estado do serviço
+  status-json  mostra serviço, conectividade e fila em JSON para a central
+  sincronizar-alunos envia os cadastros da consulta somente de leitura ao painel
+  preparar-consulta-alunos descobre e valida um SELECT sem retornar cadastros
   testar       testa a conexão com o banco e com o SaaS e sai
+	  diagnostico gera um relatório seguro para o suporte e sai
   descobrir    imprime o reconhecimento do banco (colunas, locais, amostras)
   versao       imprime a versão
 
@@ -139,7 +145,7 @@ func executar(comando, caminhoConfig string) error {
 
 	svcCfg := &service.Config{
 		Name:        "ConectaNotificaAgent",
-		DisplayName: "Conecta Notifica — Agente",
+		DisplayName: "Agente Conecta Notifica",
 		Description: "Lê as marcações de acesso no SQL Server e envia para o Conecta Notifica.",
 		Arguments:   []string{"run", "-config", abs},
 	}
@@ -161,6 +167,8 @@ func executar(comando, caminhoConfig string) error {
 			return err
 		}
 		return controlarServico(s, comando)
+	case "reparar":
+		return repararServico(abs, svcCfg)
 	}
 
 	cfg, err := config.Carregar(abs)
@@ -193,6 +201,29 @@ func executar(comando, caminhoConfig string) error {
 		return descobrir(cfg)
 	case "testar":
 		return testar(cfg, log)
+	case "config-json":
+		return json.NewEncoder(os.Stdout).Encode(struct {
+			Escola, Servidor, Instancia, Database, Usuario, Senha, URL, Chave string
+			Porta                                                             int
+			SincronizarAlunos                                                 bool
+			IntervaloAlunosMinutos                                            int
+			ConsultaAlunosConfigurada                                         bool
+			ConsultaAlunos                                                    string
+		}{cfg.Escola.Nome, cfg.Banco.Servidor, cfg.Banco.Instancia, cfg.Banco.Database, cfg.Banco.Usuario, cfg.Banco.Senha, cfg.SaaS.BaseURL, cfg.SaaS.APIKey, cfg.Banco.Porta,
+			cfg.Consultas.SincronizarAlunos, cfg.Consultas.IntervaloAlunosMinuto, strings.TrimSpace(cfg.Consultas.Alunos) != "", cfg.Consultas.Alunos})
+	case "preparar-consulta-alunos":
+		return prepararConsultaAlunos(abs, cfg)
+	case "status-json":
+		return imprimirStatusJSON(cfg, svcCfg)
+	case "sincronizar-alunos":
+		return sincronizarAlunosAgora(cfg, log, Versao)
+	case "diagnostico":
+		caminho, err := diagnosticoSeguroParaArquivo(abs)
+		if err != nil {
+			return err
+		}
+		fmt.Println("Diagnóstico seguro salvo em", caminho)
+		return nil
 	case "run":
 		p := &programa{cfg: cfg, log: log}
 		s, err := service.New(p, svcCfg)
@@ -203,6 +234,114 @@ func executar(comando, caminhoConfig string) error {
 	default:
 		return fmt.Errorf("comando desconhecido: %q (use -h)", comando)
 	}
+}
+
+// prepararConsultaAlunos descobre o cadastro pela FK, valida somente metadados
+// e grava o SELECT localmente. O banco operacional nunca é alterado.
+func prepararConsultaAlunos(caminho string, cfg *config.Config) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repo, err := banco.Abrir(ctx, cfg)
+	if err != nil { return fmt.Errorf("não consegui conectar para descobrir o cadastro; confira usuário e permissão SELECT: %w", err) }
+	defer repo.Fechar()
+	consulta, aviso, err := repo.ConsultaAlunosSugerida(ctx)
+	if err != nil { return err }
+	if err := repo.ValidarConsultaAlunosCompilacao(ctx, consulta); err != nil {
+		return fmt.Errorf("encontrei um candidato, mas a conta não conseguiu validá-lo; confira SELECT na tabela referenciada: %w", err)
+	}
+	if err := config.SalvarConsultaAlunos(caminho, consulta); err != nil { return err }
+	fmt.Println("Consulta de alunos configurada e validada sem ler registros.")
+	fmt.Println(aviso)
+	fmt.Println("A sincronização automática permanece desligada; revise os critérios de validade e habilite-a somente depois.")
+	return nil
+}
+
+func imprimirStatusJSON(cfg *config.Config, svcCfg *service.Config) error {
+	servico := "unknown"
+	s, err := service.New(&programa{}, svcCfg)
+	if err == nil {
+		if st, statusErr := s.Status(); statusErr == nil {
+			switch st {
+			case service.StatusRunning:
+				servico = "running"
+			case service.StatusStopped:
+				servico = "stopped"
+			default:
+				servico = "not_installed"
+			}
+		} else {
+			servico = "not_installed"
+		}
+	}
+	snapshot, estadoErr := estado.Ler(estado.Caminho(cfg.Armazenamento.Diretorio))
+	var ponteiroEstado *estado.Estado
+	if estadoErr == nil {
+		ponteiroEstado = &snapshot
+	}
+	syncAlunos, syncErr := estado.LerSincronizacao(estado.CaminhoSincronizacao(cfg.Armazenamento.Diretorio))
+	var ponteiroSync *estado.Sincronizacao
+	if syncErr == nil {
+		ponteiroSync = &syncAlunos
+	}
+	return json.NewEncoder(os.Stdout).Encode(struct {
+		Servico                   string                `json:"servico"`
+		Versao                    string                `json:"versao"`
+		Estado                    *estado.Estado        `json:"estado,omitempty"`
+		Sincronizacao             *estado.Sincronizacao `json:"sincronizacao,omitempty"`
+		SincronizacaoHabilitada   bool                  `json:"sincronizacao_habilitada"`
+		ConsultaAlunosConfigurada bool                  `json:"consulta_alunos_configurada"`
+		IntervaloAlunosMinutos    int                   `json:"intervalo_alunos_minutos"`
+	}{servico, Versao, ponteiroEstado, ponteiroSync, cfg.Consultas.SincronizarAlunos,
+		strings.TrimSpace(cfg.Consultas.Alunos) != "", cfg.Consultas.IntervaloAlunosMinuto})
+}
+
+func sincronizarAlunosAgora(cfg *config.Config, log *slog.Logger, versao string) error {
+	caminhoStatus := estado.CaminhoSincronizacao(cfg.Armazenamento.Diretorio)
+	tentativa := time.Now()
+	gravar := func(s estado.Sincronizacao) {
+		if err := estado.GravarSincronizacao(caminhoStatus, s); err != nil {
+			log.Warn("não foi possível guardar o estado da sincronização de alunos", "erro", err)
+		}
+	}
+	if strings.TrimSpace(cfg.Consultas.Alunos) == "" {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Mensagem: "Configure uma consulta SELECT em consultas.alunos antes de sincronizar."})
+		return fmt.Errorf("sincronização indisponível: configure uma consulta somente de leitura em consultas.alunos")
+	}
+	if err := validarConsultaAlunos(cfg.Consultas.Alunos); err != nil {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Mensagem: "A consulta configurada não passou na validação de leitura."})
+		return err
+	}
+	gravar(estado.Sincronizacao{TentativaEm: tentativa, Mensagem: "Sincronização em andamento."})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	repo, err := banco.Abrir(ctx, cfg)
+	if err != nil {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Mensagem: "Não foi possível conectar ao banco da catraca."})
+		return fmt.Errorf("conexão com banco: %w", err)
+	}
+	defer repo.Fechar()
+	alunos, err := repo.BuscarAlunos(ctx)
+	if err != nil {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Mensagem: "A consulta de cadastros falhou."})
+		return err
+	}
+	if len(alunos) == 0 {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Sucesso: true, Mensagem: "Consulta concluída; nenhum cadastro foi enviado."})
+		fmt.Println("Consulta concluída; nenhum cadastro foi enviado.")
+		return nil
+	}
+	if err := api.Novo(cfg, versao).SincronizarAlunos(ctx, alunos, true); err != nil {
+		gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Quantidade: len(alunos), Mensagem: "Falha ao enviar os cadastros ao painel."})
+		return err
+	}
+	gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Quantidade: len(alunos), Sucesso: true, Mensagem: "Cadastros enviados ao painel."})
+	fmt.Printf("Sincronização concluída: %d cadastro(s) enviado(s).\n", len(alunos))
+	return nil
+}
+
+func validarConsultaAlunos(consulta string) error {
+	// A mesma regra é aplicada pelo repositório antes de qualquer execução SQL.
+	return banco.ValidarConsultaSomenteLeitura(consulta)
 }
 
 // configurar grava o config.yaml sem interação. É o que o instalador do
@@ -478,7 +617,7 @@ func abrirPainel(caminhoConfig string, svcCfg *service.Config) error {
 			if !arquivoExiste(caminhoConfig) {
 				return fmt.Errorf("o agente ainda não foi configurado; execute o instalador gráfico ConectaNotifica-Agente primeiro")
 			}
-			return exec.Command("notepad.exe", caminhoConfig).Start()
+			return abrirAlvo(caminhoConfig)
 		},
 		GerarDiagnostico: func() (string, error) {
 			caminho, err := diagnosticoSeguroParaArquivo(caminhoConfig)
@@ -487,9 +626,7 @@ func abrirPainel(caminhoConfig string, svcCfg *service.Config) error {
 			}
 			return "Diagnóstico seguro salvo em " + filepath.Base(caminho) + ".", nil
 		},
-		AbrirPasta: func() error {
-			return exec.Command("explorer.exe", filepath.Dir(caminhoConfig)).Start()
-		},
+		AbrirPasta: func() error { return abrirAlvo(filepath.Dir(caminhoConfig)) },
 	})
 }
 
@@ -518,8 +655,45 @@ func repararServico(caminhoConfig string, svcCfg *service.Config) error {
 	if err != nil {
 		return err
 	}
-	_ = service.Control(s, "stop")
-	_ = service.Control(s, "uninstall")
+	return instalarOuAtualizarServico(s)
+}
+
+// instalarOuAtualizarServico evita a corrida do SCM ao substituir um serviço:
+// o Windows pode manter o nome reservado por alguns instantes após Delete.
+// Na primeira instalação, não tenta parar/remover um serviço inexistente.
+func instalarOuAtualizarServico(s service.Service) error {
+	status, err := s.Status()
+	if err != nil && !errors.Is(err, service.ErrNotInstalled) {
+		return fmt.Errorf("consultando serviço: %w", err)
+	}
+	if err == nil {
+		if status == service.StatusRunning {
+			if err := service.Control(s, "stop"); err != nil {
+				return fmt.Errorf("parando serviço existente: %w", err)
+			}
+		}
+		if err := service.Control(s, "uninstall"); err != nil {
+			// Uninstall pode remover o serviço e falhar apenas ao limpar a fonte
+			// de eventos. Só seguimos se o SCM confirmar que ele já desapareceu.
+			if _, statusErr := s.Status(); !errors.Is(statusErr, service.ErrNotInstalled) {
+				return fmt.Errorf("removendo serviço existente: %w", err)
+			}
+		}
+		limite := time.Now().Add(10 * time.Second)
+		for time.Now().Before(limite) {
+			_, statusErr := s.Status()
+			if errors.Is(statusErr, service.ErrNotInstalled) {
+				break
+			}
+			if statusErr != nil {
+				return fmt.Errorf("aguardando remoção do serviço: %w", statusErr)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+		if _, statusErr := s.Status(); !errors.Is(statusErr, service.ErrNotInstalled) {
+			return fmt.Errorf("o Windows ainda mantém o serviço registrado; aguarde alguns segundos e tente novamente")
+		}
+	}
 	if err := service.Control(s, "install"); err != nil {
 		return fmt.Errorf("instalando serviço: %w", err)
 	}
@@ -614,8 +788,9 @@ func identidadePainel(dirDados, nomeConfigurado string) string {
 	return "Escola: ainda não identificada"
 }
 
-// diagnosticoSeguroParaArquivo cria um relatório que a escola pode enviar ao
-// suporte sem revelar senha SQL, API key, DSN ou conteúdo da fila local.
+// diagnosticoSeguroParaArquivo acrescenta uma entrada ao histórico que a escola
+// pode enviar ao suporte. O arquivo é cumulativo para preservar diagnósticos
+// anteriores, sem revelar senha SQL, API key, DSN ou conteúdo da fila local.
 func diagnosticoSeguroParaArquivo(caminhoConfig string) (string, error) {
 	cfg, err := config.Carregar(caminhoConfig)
 	if err != nil {
@@ -626,32 +801,74 @@ func diagnosticoSeguroParaArquivo(caminhoConfig string) (string, error) {
 		dirDados = filepath.Join(filepath.Dir(caminhoConfig), dirDados)
 	}
 
+	agora := time.Now().In(time.Local)
 	var b strings.Builder
-	b.WriteString("Conecta Notifica — diagnóstico seguro\n")
-	b.WriteString("Gerado em: " + time.Now().Format("02/01/2006 15:04:05") + "\n")
+	b.WriteString("\n")
+	b.WriteString("================================================================\n")
+	b.WriteString("[" + agora.Format("02/01/2006 15:04:05 MST") + "] Diagnóstico solicitado\n")
+	b.WriteString("================================================================\n")
+	b.WriteString(eventoDiagnostico(agora, "Configuração validada"))
 	b.WriteString("Versão do agente: " + Versao + "\n")
-	b.WriteString("Configuração: válida\n")
 
 	e, err := estado.Ler(estado.Caminho(dirDados))
 	if err != nil {
-		b.WriteString("Estado do agente: ainda não publicado\n")
+		b.WriteString(eventoDiagnostico(agora, "Estado do agente ainda não publicado"))
 	} else {
-		b.WriteString("Última atualização: " + e.Em.In(time.Local).Format("02/01/2006 15:04:05") + "\n")
+		b.WriteString(eventoDiagnostico(agora, "Estado local do agente lido"))
+		b.WriteString("Última atualização do estado: " + dataHoraSegura(e.Em) + "\n")
 		b.WriteString(fmt.Sprintf("Banco da catraca: %t\nPainel: %t\nFila local: %d\nEnviados hoje: %d\n", e.BancoOK, e.SaaSOK, e.Pendentes, e.EnviadosHoje))
 		if e.UltimoEvento != "" {
-			b.WriteString("Último evento: " + e.UltimoEvento + "\n")
+			b.WriteString("Data/hora do último evento enviado: " + dataHoraTextoSeguro(e.UltimoEvento) + "\n")
 		}
 		if e.UltimoErro != "" {
 			b.WriteString("Último erro: " + textoSeguro(e.UltimoErro) + "\n")
 		}
 	}
-	b.WriteString("\nEste relatório não contém credenciais, chaves, DSN ou dados da fila.\n")
+	b.WriteString(eventoDiagnostico(agora, "Diagnóstico concluído"))
+	b.WriteString("Este relatório não contém credenciais, chaves, DSN ou dados da fila.\n")
 
 	saida := filepath.Join(filepath.Dir(caminhoConfig), "diagnostico-seguro.txt")
-	if err := os.WriteFile(saida, []byte(b.String()), 0o644); err != nil {
+	primeiraEntrada := false
+	if _, err := os.Stat(saida); os.IsNotExist(err) {
+		primeiraEntrada = true
+	} else if err != nil {
+		return "", fmt.Errorf("consultando histórico de diagnóstico: %w", err)
+	}
+
+	f, err := os.OpenFile(saida, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	if err != nil {
+		return "", fmt.Errorf("abrindo histórico de diagnóstico: %w", err)
+	}
+	defer f.Close()
+	if primeiraEntrada {
+		if _, err := f.WriteString("Conecta Notifica — histórico de diagnóstico seguro\nCada seção abaixo corresponde a um clique em Gerar diagnóstico seguro.\n"); err != nil {
+			return "", fmt.Errorf("gravando cabeçalho do diagnóstico: %w", err)
+		}
+	}
+	if _, err := f.WriteString(b.String()); err != nil {
 		return "", err
 	}
 	return saida, nil
+}
+
+func eventoDiagnostico(quando time.Time, descricao string) string {
+	return "[" + quando.In(time.Local).Format("02/01/2006 15:04:05 MST") + "] " + descricao + "\n"
+}
+
+func dataHoraSegura(quando time.Time) string {
+	if quando.IsZero() {
+		return "não informada"
+	}
+	return quando.In(time.Local).Format("02/01/2006 15:04:05 MST")
+}
+
+func dataHoraTextoSeguro(valor string) string {
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if quando, err := time.Parse(layout, valor); err == nil {
+			return dataHoraSegura(quando)
+		}
+	}
+	return textoSeguro(valor)
 }
 
 func textoSeguro(s string) string {
@@ -726,14 +943,8 @@ func assistente(caminhoConfig string, svcCfg *service.Config) error {
 		if err != nil {
 			return err
 		}
-		// reinstala por cima se já existia
-		_ = service.Control(s, "stop")
-		_ = service.Control(s, "uninstall")
-		if err := service.Control(s, "install"); err != nil {
-			return fmt.Errorf("instalando serviço: %w", err)
-		}
-		if err := service.Control(s, "start"); err != nil {
-			return fmt.Errorf("iniciando serviço: %w", err)
+		if err := instalarOuAtualizarServico(s); err != nil {
+			return err
 		}
 		fmt.Println("\nServiço instalado e rodando. Pode fechar esta janela.")
 	} else {
