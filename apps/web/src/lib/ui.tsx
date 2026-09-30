@@ -1,8 +1,162 @@
 'use client';
 // Peças visuais compartilhadas do painel — seguem o entrou-mockup.html.
 import { useCallback, useRef, useState } from 'react';
+import {
+  IconAdjustments,
+  IconAlertCircle,
+  IconAlertTriangle,
+  IconAntennaOff,
+  IconArrowBackUp,
+  IconArrowLeft,
+  IconBell,
+  IconBrandMeta,
+  IconBrandWhatsapp,
+  IconBuildingCommunity,
+  IconCash,
+  IconCashOff,
+  IconChartBar,
+  IconCheck,
+  IconChecks,
+  IconChevronDown,
+  IconChevronLeft,
+  IconChevronRight,
+  IconChevronUp,
+  IconCircleCheck,
+  IconClock,
+  IconClockExclamation,
+  IconCopy,
+  IconDatabase,
+  IconDeviceFloppy,
+  IconDeviceMobile,
+  IconDeviceMobileOff,
+  IconDoorEnter,
+  IconDownload,
+  IconEye,
+  IconEyeCheck,
+  IconFileInvoice,
+  IconFileSpreadsheet,
+  IconFileText,
+  IconHourglass,
+  IconInfoCircle,
+  IconKey,
+  IconLayoutDashboard,
+  IconLayoutGrid,
+  IconLock,
+  IconLockOpen,
+  IconLogin,
+  IconLogout,
+  IconMessageCircleCheck,
+  IconPassword,
+  IconPencil,
+  IconPlug,
+  IconPlugConnected,
+  IconPlugConnectedX,
+  IconPlugOff,
+  IconPlus,
+  IconQrcode,
+  IconRefresh,
+  IconRocket,
+  IconRotate,
+  IconSchool,
+  IconSearch,
+  IconSend,
+  IconServer2,
+  IconSettings,
+  IconShieldCheck,
+  IconShieldX,
+  IconTable,
+  IconTableImport,
+  IconTemplate,
+  IconTrendingUp,
+  IconUserCheck,
+  IconUserHeart,
+  IconUserOff,
+  IconUserPlus,
+  IconUserQuestion,
+  IconUsers,
+  IconWebhook,
+  IconX,
+  type TablerIcon,
+} from '@tabler/icons-react';
 
-/** Ícone Tabler (webfont carregada no layout raiz). */
+const ICONES: Record<string, TablerIcon> = {
+  adjustments: IconAdjustments,
+  'alert-circle': IconAlertCircle,
+  'alert-triangle': IconAlertTriangle,
+  'antenna-off': IconAntennaOff,
+  'arrow-back-up': IconArrowBackUp,
+  'arrow-left': IconArrowLeft,
+  bell: IconBell,
+  'brand-meta': IconBrandMeta,
+  'brand-whatsapp': IconBrandWhatsapp,
+  'building-community': IconBuildingCommunity,
+  cash: IconCash,
+  'cash-off': IconCashOff,
+  'chart-bar': IconChartBar,
+  check: IconCheck,
+  checks: IconChecks,
+  'chevron-down': IconChevronDown,
+  'chevron-left': IconChevronLeft,
+  'chevron-right': IconChevronRight,
+  'chevron-up': IconChevronUp,
+  'circle-check': IconCircleCheck,
+  clock: IconClock,
+  'clock-exclamation': IconClockExclamation,
+  copy: IconCopy,
+  database: IconDatabase,
+  'device-floppy': IconDeviceFloppy,
+  'device-mobile': IconDeviceMobile,
+  'device-mobile-off': IconDeviceMobileOff,
+  'door-enter': IconDoorEnter,
+  download: IconDownload,
+  eye: IconEye,
+  'eye-check': IconEyeCheck,
+  'file-invoice': IconFileInvoice,
+  'file-spreadsheet': IconFileSpreadsheet,
+  'file-text': IconFileText,
+  hourglass: IconHourglass,
+  'info-circle': IconInfoCircle,
+  key: IconKey,
+  'layout-dashboard': IconLayoutDashboard,
+  'layout-grid': IconLayoutGrid,
+  lock: IconLock,
+  'lock-open': IconLockOpen,
+  login: IconLogin,
+  logout: IconLogout,
+  'message-circle-check': IconMessageCircleCheck,
+  password: IconPassword,
+  pencil: IconPencil,
+  plug: IconPlug,
+  'plug-connected': IconPlugConnected,
+  'plug-connected-x': IconPlugConnectedX,
+  'plug-off': IconPlugOff,
+  plus: IconPlus,
+  qrcode: IconQrcode,
+  refresh: IconRefresh,
+  rocket: IconRocket,
+  rotate: IconRotate,
+  school: IconSchool,
+  search: IconSearch,
+  send: IconSend,
+  'server-2': IconServer2,
+  settings: IconSettings,
+  'shield-check': IconShieldCheck,
+  'shield-x': IconShieldX,
+  table: IconTable,
+  'table-import': IconTableImport,
+  template: IconTemplate,
+  'trending-up': IconTrendingUp,
+  'user-check': IconUserCheck,
+  'user-heart': IconUserHeart,
+  'user-off': IconUserOff,
+  'user-plus': IconUserPlus,
+  'user-question': IconUserQuestion,
+  users: IconUsers,
+  webhook: IconWebhook,
+  x: IconX,
+};
+
+/** Ícone Tabler em SVG inline: carrega só os desenhos usados pelo painel. */
 export function Ic({ nome, className, style, title, onClick }: {
   nome: string;
   className?: string;
@@ -10,12 +164,16 @@ export function Ic({ nome, className, style, title, onClick }: {
   title?: string;
   onClick?: React.MouseEventHandler;
 }) {
+  const Icone = ICONES[nome];
+  if (!Icone) return null;
   return (
-    <i
+    <Icone
       className={`ti ti-${nome}${className ? ` ${className}` : ''}`}
       style={style}
       title={title}
+      size="1em"
       onClick={onClick}
+      aria-hidden={title ? undefined : true}
     />
   );
 }
@@ -122,6 +280,24 @@ export function telefoneBonito(e164: string | null): string {
   const m = e164.match(/^\+55(\d{2})(\d{4,5})(\d{4})$/);
   if (m) return `(${m[1]}) ${m[2]}-${m[3]}`;
   return e164;
+}
+
+/** Máscara progressiva para telefones brasileiros; preserva E.164 internacional com +. */
+export function mascaraTelefone(entrada: string): string {
+  const internacional = entrada.trim().startsWith('+');
+  let digitos = entrada.replace(/\D/g, '');
+  if (internacional && !digitos.startsWith('55')) return `+${digitos.slice(0, 15)}`;
+  const prefixo = internacional ? '+55 ' : '';
+  if (internacional && digitos.startsWith('55')) digitos = digitos.slice(2);
+  digitos = digitos.slice(0, 11);
+  if (digitos.length === 0) return prefixo.trimEnd();
+  if (digitos.length <= 2) return `${prefixo}(${digitos}`;
+  const ddd = digitos.slice(0, 2);
+  const numero = digitos.slice(2);
+  if (numero.length === 0) return `${prefixo}(${ddd})`;
+  const tamanhoInicial = digitos.length === 11 ? 5 : 4;
+  if (numero.length <= tamanhoInicial) return `${prefixo}(${ddd}) ${numero}`;
+  return `${prefixo}(${ddd}) ${numero.slice(0, tamanhoInicial)}-${numero.slice(tamanhoInicial, tamanhoInicial + 4)}`;
 }
 
 /** Entrada do usuário → E.164 (assume Brasil quando vier sem código do país). */

@@ -79,6 +79,23 @@ export default function PaginaResponsaveis() {
         </label>
       </div>
 
+      <div className="resp-orientacao">
+        <span className="resp-orientacao-icone">
+          <Ic nome="user-plus" />
+        </span>
+        <div className="resp-orientacao-texto">
+          <b>Cadastro individual é feito pela ficha do aluno</b>
+          <p>
+            Para incluir um responsável, abra <b>Alunos</b>, selecione o aluno e clique em{' '}
+            <b>Adicionar responsável</b>. Assim, ele já fica vinculado ao aluno correto.
+          </p>
+        </div>
+        <Link href="/painel/alunos" className="btn ghost">
+          Ver alunos
+          <Ic nome="chevron-right" />
+        </Link>
+      </div>
+
       {resultado && (
         <div className={`card imp-resultado ${resultado.erros.length ? 'com-erro' : ''}`}>
           <h3>
@@ -153,7 +170,7 @@ export default function PaginaResponsaveis() {
           }}
         >
           <Ic nome="shield-x" />
-          Sem opt-in
+          Sem autorização
         </button>
       </div>
 
@@ -212,9 +229,9 @@ export default function PaginaResponsaveis() {
                         Autorizado
                       </span>
                     ) : (
-                      <span className="pill p-coral" title="Sem opt-in o sistema não envia nada">
+                      <span className="pill p-coral" title="Sem autorização, o sistema não envia avisos">
                         <Ic nome="shield-x" />
-                        Sem opt-in
+                        Sem autorização
                       </span>
                     )}
                   </td>

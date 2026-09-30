@@ -118,13 +118,14 @@ export interface VisaoGeral {
       cursor?: string;
       pending?: number;
       db_ok?: boolean;
-      last_error?: string;
+      last_event_at?: string;
       sent_today?: number;
     } | null;
   };
   whatsapp: { conectado: boolean; provider: string | null };
   hoje: { eventos: number; enviadas: number; entregues: number; falhas: number };
   alunos_sem_responsavel: number;
+  alunos_total: number;
   ultimos_acessos: {
     id: string;
     aluno: string;
@@ -143,10 +144,17 @@ export interface AlunoLista {
   card: string | null;
   responsaveis: number;
   pendente: boolean;
+  sincronizado: boolean;
 }
 export interface RespostaAlunos {
   total: number;
   pagina: number;
+  resumo?: {
+    total: number;
+    sincronizados: number;
+    aguardando_sincronizacao: number;
+    sem_responsavel: number;
+  };
   alunos: AlunoLista[];
 }
 export interface ResponsavelAluno {
@@ -199,7 +207,19 @@ export interface Configuracoes {
     window_end: string;
     notify_weekends: boolean;
   };
-  agente: { chave_criada_em: string | null; last_seen_at: string | null };
+  agente: {
+    chave_criada_em: string | null;
+    last_seen_at: string | null;
+    online: boolean;
+    status: {
+      version?: string;
+      cursor?: string;
+      pending?: number;
+      db_ok?: boolean;
+      last_event_at?: string;
+      sent_today?: number;
+    } | null;
+  };
   /** Limites do plano — quem muda é o admin interno. */
   contrato: {
     max_alunos: number | null;
@@ -215,6 +235,7 @@ export interface Configuracoes {
     /** false quando bateu o teto de chips ou a escola está bloqueada. */
     pode_adicionar: boolean;
     webhook_token: string | null;
+    webhook_url: string | null;
     /** true = a API tem conta UAZAPI, então o painel mostra o QR code. */
     qr_disponivel: boolean;
   };
@@ -323,6 +344,12 @@ export interface Onboarding {
   concluido: boolean;
   agente: { chave_criada_em: string | null; last_seen_at: string | null; online: boolean };
   whatsapp: { chips: Chip[]; pode_adicionar: boolean };
-  alunos: { total: number; sem_responsavel: number; responsaveis: number };
+  alunos: {
+    total: number;
+    sincronizados: number;
+    aguardando_sincronizacao: number;
+    sem_responsavel: number;
+    responsaveis: number;
+  };
   url_agente: string | null;
 }

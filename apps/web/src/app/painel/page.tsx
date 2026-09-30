@@ -153,6 +153,13 @@ export default function PaginaVisaoGeral() {
                   {dados.alunos_sem_responsavel === 1 ? 'aluno sem responsável' : 'alunos sem responsável'}
                 </b>
               </Link>
+            ) : dados.alunos_total === 0 ? (
+              <Link href="/painel/alunos" className="conn c-sun">
+                <Ic nome="users" className="big" />
+                <span className="go"><Ic nome="chevron-right" /></span>
+                <small>Alunos</small>
+                <b>Nenhum aluno cadastrado ainda</b>
+              </Link>
             ) : (
               <Link href="/painel/alunos" className="conn c-mint">
                 <Ic nome="user-check" className="big" />
@@ -261,7 +268,7 @@ export default function PaginaVisaoGeral() {
               </span>
               <div>
                 <b>Fique de olho nos avisos</b>
-                <small>Acompanhe falhas e opt-ins pendentes</small>
+                <small>Acompanhe falhas e autorizações pendentes</small>
               </div>
             </div>
           </div>

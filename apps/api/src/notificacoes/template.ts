@@ -2,8 +2,8 @@
 // variáveis {responsavel} {aluno} {hora} {escola}.
 
 export const TEMPLATE_PADRAO: Record<'IN' | 'OUT', string> = {
-  IN: 'Olá {responsavel}! {aluno} entrou na {escola} às {hora}.',
-  OUT: 'Olá {responsavel}! {aluno} saiu da {escola} às {hora}.',
+  IN: 'Olá {responsavel}! {aluno} registrou entrada em {escola} às {hora}.',
+  OUT: 'Olá {responsavel}! {aluno} registrou saída em {escola} às {hora}.',
 };
 
 /** Variáveis aceitas nos modelos (doc §3, message_templates). */

@@ -154,7 +154,7 @@ export default function FichaEscola() {
           tom="s-mint"
           icone="device-mobile"
           valor={`${e.uso.chips_conectados} / ${e.contrato.max_chips}`}
-          rotulo="Chips conectados"
+          rotulo="Chips conectados / limite"
         />
         <Indicador
           tom={e.agente.online ? 's-sky' : 's-coral'}
@@ -293,10 +293,22 @@ export default function FichaEscola() {
             <div>
               <h3>Chips</h3>
               <small>
-                {e.chips.length} de {e.contrato.max_chips} usados
+                {e.uso.chips_conectados} conectado(s) · {e.uso.chips} cadastrado(s) · limite do plano {e.contrato.max_chips}
               </small>
             </div>
           </div>
+          {e.uso.chips > e.contrato.max_chips && (
+            <div className="adm-alerta" style={{ marginTop: 12 }}>
+              <Ic nome="alert-triangle" />
+              <div>
+                <b>Há mais números cadastrados que o limite do plano</b>
+                <small>
+                  O plano permite {e.contrato.max_chips}, mas existem {e.uso.chips} instâncias cadastradas.
+                  Revise o cadastro ou o contrato antes de adicionar outro número.
+                </small>
+              </div>
+            </div>
+          )}
           {e.chips.length === 0 ? (
             <div className="empty">
               <Ic nome="device-mobile-off" />

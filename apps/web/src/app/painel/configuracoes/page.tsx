@@ -1,10 +1,9 @@
 'use client';
 // Configurações — conexões, regras de envio e dados da escola.
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { api, API_URL, ConexaoWhatsapp, Configuracoes } from '@/lib/api';
+import { api, ConexaoWhatsapp, Configuracoes } from '@/lib/api';
 import { Ic, quandoCurto, useToast } from '@/lib/ui';
 
-const AGENTE_ONLINE_MS = 90_000;
 // A UAZAPI expira o QR em 2 min e o código de pareamento em 5 (doc do
 // /instance/connect). Passado o prazo, paramos de perguntar e oferecemos outro.
 const QR_VALIDADE_MS = 120_000;
@@ -14,9 +13,6 @@ export default function PaginaConfiguracoes() {
   const [cfg, setCfg] = useState<Configuracoes | null>(null);
   const [erro, setErro] = useState('');
   const [chaveNova, setChaveNova] = useState('');
-  const [baseUrl, setBaseUrl] = useState('');
-  const [tokenWhats, setTokenWhats] = useState('');
-  const [salvandoWhats, setSalvandoWhats] = useState(false);
   const [conexao, setConexao] = useState<ConexaoWhatsapp | null>(null);
   const [abrindoQr, setAbrindoQr] = useState(false);
   const [aguardandoLeitura, setAguardandoLeitura] = useState(false);
@@ -35,7 +31,11 @@ export default function PaginaConfiguracoes() {
       .catch((e) => setErro(e instanceof Error ? e.message : 'falha ao carregar'));
   }, []);
 
-  useEffect(carregar, [carregar]);
+  useEffect(() => {
+    carregar();
+    const id = setInterval(carregar, 15_000);
+    return () => clearInterval(id);
+  }, [carregar]);
 
   async function salvarRegra(campo: string, valor: string | number | boolean) {
     if (!cfg) return;
@@ -69,24 +69,6 @@ export default function PaginaConfiguracoes() {
       carregar();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'não foi possível regenerar');
-    }
-  }
-
-  async function conectarWhats(e: FormEvent) {
-    e.preventDefault();
-    setSalvandoWhats(true);
-    try {
-      await api('/v1/painel/configuracoes/whatsapp', {
-        method: 'POST',
-        body: JSON.stringify({ base_url: baseUrl.trim(), token: tokenWhats.trim() }),
-      });
-      toast('WhatsApp conectado');
-      setTokenWhats('');
-      carregar();
-    } catch (err) {
-      toast(err instanceof Error ? err.message : 'não foi possível conectar');
-    } finally {
-      setSalvandoWhats(false);
     }
   }
 
@@ -173,12 +155,8 @@ export default function PaginaConfiguracoes() {
   if (erro && !cfg) return <div className="carregando">{erro}</div>;
   if (!cfg) return <div className="carregando">Carregando configurações…</div>;
 
-  const agenteOnline =
-    !!cfg.agente.last_seen_at &&
-    Date.now() - new Date(cfg.agente.last_seen_at).getTime() < AGENTE_ONLINE_MS;
-  const webhookUrl = cfg.whatsapp.webhook_token
-    ? `${API_URL}/v1/webhooks/uazapi/${cfg.whatsapp.webhook_token}`
-    : null;
+  const agenteOnline = cfg.agente.online;
+  const webhookUrl = cfg.whatsapp.webhook_url;
 
   return (
     <section>
@@ -244,129 +222,100 @@ export default function PaginaConfiguracoes() {
             </div>
           ))}
 
-          {cfg.whatsapp.qr_disponivel ? (
-            <div className="qrzona">
-              {conexao?.qrcode && aguardandoLeitura ? (
-                <>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img className="qrimg" src={conexao.qrcode} alt="QR code para conectar o WhatsApp" />
-                  <ol className="qrpassos">
-                    <li>Abra o WhatsApp no celular da escola</li>
-                    <li>Toque em <b>Aparelhos conectados</b></li>
-                    <li>Toque em <b>Conectar aparelho</b> e aponte para o código</li>
-                  </ol>
-                  <p className="qrstatus">
-                    <span className="ponto" />
-                    Esperando a leitura…
+          <div className="qrzona">
+            {conexao?.qrcode && aguardandoLeitura ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img className="qrimg" src={conexao.qrcode} alt="QR code para conectar o WhatsApp" />
+                <ol className="qrpassos">
+                  <li>Abra o WhatsApp no celular da escola</li>
+                  <li>Toque em <b>Aparelhos conectados</b></li>
+                  <li>Toque em <b>Conectar aparelho</b> e aponte para o código</li>
+                </ol>
+                <p className="qrstatus">
+                  <span className="ponto" />
+                  Esperando a leitura…
+                </p>
+              </>
+            ) : conexao?.paircode && aguardandoLeitura ? (
+              <>
+                <div className="paircode">{conexao.paircode}</div>
+                <ol className="qrpassos">
+                  <li>No WhatsApp do celular, vá em <b>Aparelhos conectados</b></li>
+                  <li>Toque em <b>Conectar com número de telefone</b></li>
+                  <li>Digite o código acima</li>
+                </ol>
+                <p className="qrstatus">
+                  <span className="ponto" />
+                  Esperando a confirmação…
+                </p>
+              </>
+            ) : (
+              <>
+                {expirado && (
+                  <p className="qraviso">
+                    <Ic nome="clock-exclamation" />
+                    O código expirou sem ser lido. Gere outro para tentar de novo.
                   </p>
-                </>
-              ) : conexao?.paircode && aguardandoLeitura ? (
-                <>
-                  <div className="paircode">{conexao.paircode}</div>
-                  <ol className="qrpassos">
-                    <li>No WhatsApp do celular, vá em <b>Aparelhos conectados</b></li>
-                    <li>Toque em <b>Conectar com número de telefone</b></li>
-                    <li>Digite o código acima</li>
-                  </ol>
-                  <p className="qrstatus">
-                    <span className="ponto" />
-                    Esperando a confirmação…
-                  </p>
-                </>
-              ) : (
-                <>
-                  {expirado && (
-                    <p className="qraviso">
-                      <Ic nome="clock-exclamation" />
-                      O código expirou sem ser lido. Gere outro para tentar de novo.
+                )}
+                {!cfg.whatsapp.pode_adicionar ? (
+                  cfg.whatsapp.chips.length > 0 && (
+                    <p className="qrtexto">
+                      {cfg.contrato.bloqueado
+                        ? 'Escola bloqueada: fale com o suporte para liberar.'
+                        : `Seu plano libera ${cfg.contrato.max_chips} ${cfg.contrato.max_chips === 1 ? 'número' : 'números'}. Fale com o suporte para ampliar.`}
                     </p>
-                  )}
-                  {!cfg.whatsapp.pode_adicionar ? (
-                    cfg.whatsapp.chips.length > 0 && (
+                  )
+                ) : modoCodigo ? (
+                  <form
+                    onSubmit={(e: FormEvent) => {
+                      e.preventDefault();
+                      iniciarConexao(telefone.trim());
+                    }}
+                  >
+                    <div className="field">
+                      <label>Número do WhatsApp da escola</label>
+                      <input
+                        value={telefone}
+                        onChange={(e) => setTelefone(e.target.value)}
+                        placeholder="+55 81 99999-0000"
+                        required
+                      />
+                    </div>
+                    <button className="btn" disabled={abrindoQr}>
+                      <Ic nome="password" />
+                      {abrindoQr ? 'Gerando…' : 'Gerar código de 8 dígitos'}
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => setModoCodigo(false)}>
+                      Voltar ao QR code
+                    </button>
+                  </form>
+                ) : (
+                  <>
+                    {cfg.whatsapp.chips.length === 0 && (
                       <p className="qrtexto">
-                        {cfg.contrato.bloqueado
-                          ? 'Escola bloqueada: fale com o suporte para liberar.'
-                          : `Seu plano libera ${cfg.contrato.max_chips} ${cfg.contrato.max_chips === 1 ? 'número' : 'números'}. Fale com o suporte para ampliar.`}
+                        Conecte o WhatsApp que vai avisar os responsáveis. É o mesmo passo a passo
+                        do WhatsApp Web: um código na tela, lido pelo celular da escola.
                       </p>
-                    )
-                  ) : modoCodigo ? (
-                    <form
-                      onSubmit={(e: FormEvent) => {
-                        e.preventDefault();
-                        iniciarConexao(telefone.trim());
-                      }}
-                    >
-                      <div className="field">
-                        <label>Número do WhatsApp da escola</label>
-                        <input
-                          value={telefone}
-                          onChange={(e) => setTelefone(e.target.value)}
-                          placeholder="+55 81 99999-0000"
-                          required
-                        />
-                      </div>
-                      <button className="btn" disabled={abrindoQr}>
-                        <Ic nome="password" />
-                        {abrindoQr ? 'Gerando…' : 'Gerar código de 8 dígitos'}
-                      </button>
-                      <button type="button" className="btn ghost" onClick={() => setModoCodigo(false)}>
-                        Voltar ao QR code
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      {cfg.whatsapp.chips.length === 0 && (
-                        <p className="qrtexto">
-                          Conecte o WhatsApp que vai avisar os responsáveis. É o mesmo passo a passo
-                          do WhatsApp Web: um código na tela, lido pelo celular da escola.
-                        </p>
-                      )}
-                      <button className="btn" onClick={() => iniciarConexao()} disabled={abrindoQr}>
-                        <Ic nome="qrcode" />
-                        {abrindoQr
-                          ? 'Gerando código…'
-                          : cfg.whatsapp.chips.length === 0
-                            ? 'Conectar por QR code'
-                            : 'Adicionar outro número'}
-                      </button>
-                      <button type="button" className="btn ghost" onClick={() => setModoCodigo(true)}>
-                        <Ic nome="password" />
-                        Não consigo escanear
-                      </button>
-                    </>
-                  )}
-                </>
-              )}
-            </div>
-          ) : (
-            /* Sem conta UAZAPI na API, resta colar o token de uma instância pronta. */
-            <form onSubmit={conectarWhats}>
-              <div className="field">
-                <label>URL base da instância</label>
-                <input
-                  value={baseUrl}
-                  onChange={(e) => setBaseUrl(e.target.value)}
-                  placeholder="https://sua-instancia.uazapi.com"
-                  required
-                />
-              </div>
-              <div className="field">
-                <label>Token da instância</label>
-                <input
-                  value={tokenWhats}
-                  onChange={(e) => setTokenWhats(e.target.value)}
-                  placeholder="token gerado na UAZAPI"
-                  required
-                  type="password"
-                />
-              </div>
-              <button className="btn" disabled={salvandoWhats}>
-                <Ic nome="plug-connected" />
-                {salvandoWhats ? 'Conectando…' : 'Conectar'}
-              </button>
-            </form>
-          )}
-          {webhookUrl && !cfg.whatsapp.qr_disponivel && (
+                    )}
+                    <button className="btn" onClick={() => iniciarConexao()} disabled={abrindoQr}>
+                      <Ic nome="qrcode" />
+                      {abrindoQr
+                        ? 'Gerando código…'
+                        : cfg.whatsapp.chips.length === 0
+                          ? 'Conectar por QR code'
+                          : 'Adicionar outro número'}
+                    </button>
+                    <button type="button" className="btn ghost" onClick={() => setModoCodigo(true)}>
+                      <Ic nome="password" />
+                      Não consigo escanear
+                    </button>
+                  </>
+                )}
+              </>
+            )}
+          </div>
+          {webhookUrl && (
             <div className="field" style={{ margin: '10px 0 0' }}>
               <label>Webhook de status (cole na UAZAPI)</label>
               <div className="keybox">
@@ -374,6 +323,13 @@ export default function PaginaConfiguracoes() {
                 <Ic nome="copy" title="Copiar" onClick={() => copiar(webhookUrl)} />
               </div>
             </div>
+          )}
+          {!webhookUrl && (
+            <p className="onb-dica" style={{ marginTop: 12 }}>
+              <Ic nome="info-circle" />
+              O endereço público da API não está configurado nesta instalação. As confirmações de entrega
+              do WhatsApp podem não atualizar até o administrador configurar o webhook da plataforma.
+            </p>
           )}
         </div>
 
@@ -386,13 +342,55 @@ export default function PaginaConfiguracoes() {
               <h3>Agente local</h3>
               <small>
                 {agenteOnline
-                  ? 'Online agora'
+                  ? cfg.agente.status?.db_ok === false
+                    ? 'Online · último reporte indicou falha no SQL'
+                    : 'Online agora'
                   : cfg.agente.last_seen_at
                     ? `Último sinal ${quandoCurto(cfg.agente.last_seen_at)}`
                     : 'Aguardando primeira conexão'}
               </small>
             </div>
           </div>
+          {cfg.agente.status && (
+            <>
+              <div className="setrow">
+                <div>
+                  <b>Último reporte do SQL Server</b>
+                  <small>
+                    {cfg.agente.status.db_ok === undefined
+                      ? 'Sem informação'
+                      : cfg.agente.status.db_ok
+                        ? 'Conectado no último sinal'
+                        : 'Sem conexão no último sinal'}
+                  </small>
+                </div>
+                <span className={`pill ${cfg.agente.status.db_ok ? 'p-mint' : 'p-coral'}`}>
+                  {cfg.agente.status.db_ok === undefined ? '—' : cfg.agente.status.db_ok ? 'OK' : 'Falha'}
+                </span>
+              </div>
+              <div className="setrow">
+                <div>
+                  <b>Fila de eventos</b>
+                  <small>
+                    {cfg.agente.status.pending ?? 0} pendente(s)
+                    {cfg.agente.status.sent_today !== undefined &&
+                      ` · ${cfg.agente.status.sent_today} enviado(s) hoje`}
+                  </small>
+                </div>
+                {cfg.agente.status.last_event_at && (
+                  <span className="pill p-grey">
+                    Último evento {quandoCurto(cfg.agente.status.last_event_at)}
+                  </span>
+                )}
+              </div>
+              {cfg.agente.status.version && (
+                <div className="setrow">
+                  <div><b>Versão do agente</b></div>
+                  <span className="pill p-grey">{cfg.agente.status.version}</span>
+                </div>
+              )}
+            </>
+          )}
           <div className="field" style={{ marginBottom: 10 }}>
             <label>Chave de API do agente</label>
             {chaveNova ? (
@@ -460,8 +458,8 @@ export default function PaginaConfiguracoes() {
           </div>
           <div className="setrow">
             <div>
-              <b>Dedupe de eventos</b>
-              <small>Ignora mesmo aluno + direção no intervalo</small>
+              <b>Evitar avisos duplicados</b>
+              <small>Não repete o aviso do mesmo aluno e tipo de acesso dentro do intervalo</small>
             </div>
             <select
               value={cfg.regras.dedupe_minutes}

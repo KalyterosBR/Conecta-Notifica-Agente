@@ -12,7 +12,7 @@ import {
   duracaoCurta,
   formatarCnpj,
 } from '@/lib/admin';
-import { Ic, useToast } from '@/lib/ui';
+import { Ic, quandoCurto, useToast } from '@/lib/ui';
 
 export default function PaginaEscolas() {
   const [resumo, setResumo] = useState<ResumoAdmin | null>(null);
@@ -123,7 +123,10 @@ export default function PaginaEscolas() {
               {mudos.map((m) => (
                 <li key={m.escola_id}>
                   <Link href={`/admin/${m.escola_id}`}>{m.escola}</Link>
-                  <span>mudo há {duracaoCurta(m.mudo_ha_minutos)}</span>
+                  <span>
+                    Sem sinal há {duracaoCurta(m.mudo_ha_minutos)}
+                    {m.ultimo_sinal ? ` · último sinal ${quandoCurto(m.ultimo_sinal)}` : ''}
+                  </span>
                   {m.ja_avisado && <em>alerta enviado</em>}
                 </li>
               ))}
@@ -181,6 +184,9 @@ export default function PaginaEscolas() {
           <button className="btn">
             <Ic nome="check" />
             Criar escola
+          </button>
+          <button className="btn ghost" type="button" onClick={() => setNovaAberta(false)}>
+            Cancelar
           </button>
         </form>
       )}
@@ -264,12 +270,12 @@ export default function PaginaEscolas() {
                     ) : e.saudavel ? (
                       <span className="pill p-mint">
                         <Ic nome="circle-check" />
-                        OK
+                        Operação normal
                       </span>
                     ) : (
                       <span className="pill p-sun">
                         <Ic nome="alert-triangle" />
-                        Atenção
+                        Atenção operacional
                       </span>
                     )}
                   </td>

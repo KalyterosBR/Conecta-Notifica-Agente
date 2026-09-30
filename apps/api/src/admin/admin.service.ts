@@ -7,14 +7,12 @@ import {
 } from '@nestjs/common';
 import { MessageStatus, Prisma, StatusCobranca } from '@prisma/client';
 import { createHash, randomBytes } from 'node:crypto';
+import { agenteEstaOnline } from '../agente/status';
 import { gerarHashSenha } from '../auth/senha';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { MonitoramentoService } from '../monitoramento/monitoramento.service';
 import { AtualizarEscolaDto, BloquearDto, CobrancaDto, CriarEscolaDto } from './dto';
-
-/** Um agente é considerado online com heartbeat nos últimos 90s. */
-const AGENTE_ONLINE_MS = 90_000;
 
 @Injectable()
 export class AdminService {
@@ -280,8 +278,7 @@ export class AdminService {
         },
       }),
     ]);
-    const agenteOnline =
-      !!chave?.lastSeenAt && Date.now() - chave.lastSeenAt.getTime() < AGENTE_ONLINE_MS;
+    const agenteOnline = agenteEstaOnline(chave?.lastSeenAt);
 
     return {
       id: escola.id,

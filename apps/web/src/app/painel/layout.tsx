@@ -43,6 +43,7 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
   const [comoEscola, setComoEscola] = useState<string | null>(null);
   const [onboarding, setOnboarding] = useState<Onboarding | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const passosPendentes = onboarding?.passos.filter((p) => !p.concluido).length ?? 0;
 
   useEffect(() => {
     if (!tokenAtual()) {
@@ -52,11 +53,24 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
     setPronto(true);
     setNome(nomeAtual());
     setComoEscola(impersonando());
-    // Enquanto o onboarding não fecha, o painel avisa em toda tela: uma escola
-    // com WhatsApp desconectado acha que está funcionando e não está.
-    api<Onboarding>('/v1/painel/onboarding')
-      .then(setOnboarding)
-      .catch(() => {});
+    // Enquanto o onboarding não fecha, o painel avisa em toda tela. Recarrega
+    // os resumos também após alterações locais, como cadastrar responsável.
+    const atualizarResumo = () => {
+      api<Onboarding>('/v1/painel/onboarding')
+        .then(setOnboarding)
+        .catch(() => {});
+      api<VisaoGeral>('/v1/painel/visao-geral')
+        .then((v) => {
+          setSemResp(v.alunos_sem_responsavel);
+          setFalhasHoje(v.hoje.falhas);
+        })
+        .catch(() => {});
+      api<{ total: number }>('/v1/painel/alunos?pagina=1')
+        .then((r) => setAlunosTotal(r.total))
+        .catch(() => {});
+    };
+    atualizarResumo();
+    window.addEventListener('conecta:painel-atualizado', atualizarResumo);
     // contexto do topo/sidebar; falha silenciosa não derruba o shell
     api<Configuracoes>('/v1/painel/configuracoes')
       .then((c) => {
@@ -64,15 +78,7 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
         setPlano(c.escola.plan);
       })
       .catch(() => {});
-    api<VisaoGeral>('/v1/painel/visao-geral')
-      .then((v) => {
-        setSemResp(v.alunos_sem_responsavel);
-        setFalhasHoje(v.hoje.falhas);
-      })
-      .catch(() => {});
-    api<{ total: number }>('/v1/painel/alunos?pagina=1')
-      .then((r) => setAlunosTotal(r.total))
-      .catch(() => {});
+    return () => window.removeEventListener('conecta:painel-atualizado', atualizarResumo);
   }, [router]);
 
   useEffect(() => {
@@ -110,6 +116,9 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
               <Ic nome={i.icone} />
               {i.nome}
               {i.nome === 'Alunos' && semResp > 0 && <span className="badge">{semResp}</span>}
+              {i.nome === 'Primeiros passos' && onboarding && !onboarding.concluido && passosPendentes > 0 && (
+                <span className="badge" aria-label={`${passosPendentes} etapas pendentes`}>{passosPendentes}</span>
+              )}
               {i.tag && <span className="tag">{i.tag}</span>}
             </Link>
           ))}
@@ -120,7 +129,9 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
             <Ic nome="school" />
           </div>
           <small>
-            {alunosTotal !== null ? `${alunosTotal} alunos sincronizados` : 'sincronizando…'}
+            {alunosTotal !== null
+              ? `${alunosTotal === 1 ? '1 aluno sincronizado' : `${alunosTotal} alunos sincronizados`}`
+              : 'sincronizando…'}
           </small>
           <div className="bar">
             <i style={{ width: alunosTotal ? '100%' : '0%' }} />
@@ -180,9 +191,7 @@ export default function PainelLayout({ children }: { children: React.ReactNode }
               <Ic nome="rocket" />
               <span>
                 <b>
-                  Faltam{' '}
-                  {onboarding.passos.filter((p) => !p.concluido).length} passo(s) para a escola
-                  começar a avisar
+                  {`Falta${passosPendentes === 1 ? '' : 'm'} ${passosPendentes} ${passosPendentes === 1 ? 'passo' : 'passos'} para a escola começar a avisar`}
                 </b>
                 <small>
                   {onboarding.passos.find((p) => !p.concluido)?.titulo} — continuar de onde parou

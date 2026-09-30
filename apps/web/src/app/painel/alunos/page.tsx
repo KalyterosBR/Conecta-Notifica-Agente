@@ -1,5 +1,6 @@
 'use client';
 // Alunos — lista sincronizada da catraca, layout do entrou-mockup.html.
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { api, RespostaAlunos } from '@/lib/api';
@@ -14,9 +15,9 @@ function Conteudo() {
   const [semResp, setSemResp] = useState(params.get('sem_responsavel') === '1');
   const [pagina, setPagina] = useState(1);
   const [dados, setDados] = useState<RespostaAlunos | null>(null);
-  const [totalGeral, setTotalGeral] = useState<number | null>(null);
-  const [totalSemResp, setTotalSemResp] = useState<number | null>(null);
   const [erro, setErro] = useState('');
+  const [carregando, setCarregando] = useState(true);
+  const [tentativa, setTentativa] = useState(0);
   const { toast, toastEl } = useToast();
 
   // valores vindos da URL (busca do topo, tile do dashboard)
@@ -28,6 +29,8 @@ function Conteudo() {
 
   useEffect(() => {
     let ativo = true;
+    setCarregando(true);
+    setErro('');
     const q = new URLSearchParams();
     if (busca.trim()) q.set('busca', busca.trim());
     if (semResp) q.set('sem_responsavel', '1');
@@ -37,25 +40,16 @@ function Conteudo() {
         .then((r) => {
           if (ativo) {
             setDados(r);
-            setErro('');
           }
         })
-        .catch((e) => ativo && setErro(e instanceof Error ? e.message : 'falha ao carregar'));
+        .catch((e) => ativo && setErro(e instanceof Error ? e.message : 'Falha ao carregar alunos.'))
+        .finally(() => ativo && setCarregando(false));
     }, 250); // debounce da busca
     return () => {
       ativo = false;
       clearTimeout(t);
     };
-  }, [busca, semResp, pagina]);
-
-  useEffect(() => {
-    api<RespostaAlunos>('/v1/painel/alunos?pagina=1')
-      .then((r) => setTotalGeral(r.total))
-      .catch(() => {});
-    api<RespostaAlunos>('/v1/painel/alunos?sem_responsavel=1&pagina=1')
-      .then((r) => setTotalSemResp(r.total))
-      .catch(() => {});
-  }, []);
+  }, [busca, semResp, pagina, tentativa]);
 
   function exportarCsv() {
     if (!dados || dados.alunos.length === 0) {
@@ -81,8 +75,14 @@ function Conteudo() {
   const totalPaginas = Math.max(1, Math.ceil(total / POR_PAGINA));
   const inicio = total === 0 ? 0 : (pagina - 1) * POR_PAGINA + 1;
   const fim = dados ? inicio + dados.alunos.length - 1 : 0;
-  const comResp =
-    totalGeral !== null && totalSemResp !== null ? totalGeral - totalSemResp : null;
+  const semFiltro = !busca.trim() && !semResp;
+  const resumo = dados?.resumo ?? (
+    dados?.total === 0 && semFiltro
+      ? { total: 0, sincronizados: 0, aguardando_sincronizacao: 0, sem_responsavel: 0 }
+      : null
+  );
+  const resumoIndisponivel = !!dados && !dados.resumo && !(dados.total === 0 && semFiltro);
+  const comResp = resumo ? resumo.total - resumo.sem_responsavel : null;
 
   return (
     <section>
@@ -90,19 +90,38 @@ function Conteudo() {
         <div>
           <h1>Alunos</h1>
           <p className="sub">
-            {totalGeral !== null
-              ? `${totalGeral} alunos sincronizados da catraca`
-              : 'Sincronizados da catraca'}{' '}
-            <span className="live-dot" />
+            {resumo
+              ? `${resumo.sincronizados} ${resumo.sincronizados === 1 ? 'aluno sincronizado' : 'alunos sincronizados'} da catraca · ${resumo.aguardando_sincronizacao} aguardando cadastro`
+              : erro
+                ? 'Não foi possível obter a situação do cadastro.'
+                : carregando
+                  ? 'Carregando situação do cadastro…'
+                  : 'Resumo de sincronização indisponível; tente novamente.'}{' '}
+            {!erro && carregando && <span className="live-dot" />}
           </p>
         </div>
-        <button className="btn" onClick={() => toast('A sincronização roda pelo agente na escola')}>
+        <button className="btn" onClick={() => router.push('/painel/onboarding')}>
           <Ic nome="refresh" />
-          Sincronizar agora
+          Ver status do agente
         </button>
       </div>
 
-      {erro && <div className="erro-inline">{erro}</div>}
+      {erro && (
+        <div className="erro-inline">
+          {erro}{' '}
+          <button className="btn ghost" onClick={() => setTentativa((n) => n + 1)}>
+            Tentar novamente
+          </button>
+        </div>
+      )}
+      {resumoIndisponivel && !erro && (
+        <div className="erro-inline">
+          A API não enviou o resumo de sincronização. Atualize ou reinicie a API local e tente novamente.{' '}
+          <button className="btn ghost" onClick={() => setTentativa((n) => n + 1)}>
+            Tentar novamente
+          </button>
+        </div>
+      )}
 
       <div className="stats">
         <div
@@ -114,9 +133,13 @@ function Conteudo() {
         >
           <span className="ic"><Ic nome="users" /></span>
           <div>
-            <b>{totalGeral ?? '—'}</b>
-            <small>Todos os alunos</small>
-            <span className="mut">100% sincronizados</span>
+            <b>{resumo?.total ?? '—'}</b>
+            <small>Alunos ativos</small>
+            <span className="mut">
+              {resumo
+                ? `${resumo.sincronizados} ${resumo.sincronizados === 1 ? 'sincronizado' : 'sincronizados'} · ${resumo.aguardando_sincronizacao} pendentes`
+                : erro ? 'Falha ao carregar' : carregando ? 'Carregando cadastro' : 'Resumo indisponível'}
+            </span>
           </div>
         </div>
         <div
@@ -128,11 +151,11 @@ function Conteudo() {
         >
           <span className="ic"><Ic nome="user-off" /></span>
           <div>
-            <b>{totalSemResp ?? '—'}</b>
+            <b>{resumo?.sem_responsavel ?? '—'}</b>
             <small>Sem responsável</small>
             <span className="mut">
-              {totalGeral && totalSemResp !== null && totalGeral > 0
-                ? `${((totalSemResp / totalGeral) * 100).toFixed(1).replace('.', ',')}% do total`
+              {resumo && resumo.total > 0
+                ? `${((resumo.sem_responsavel / resumo.total) * 100).toFixed(1).replace('.', ',')}% do total`
                 : 'não recebem avisos'}
             </span>
           </div>
@@ -142,7 +165,7 @@ function Conteudo() {
           <div>
             <b>{comResp ?? '—'}</b>
             <small>Com responsável</small>
-            <span className="mut">prontos para avisos</span>
+            <span className="mut">responsável vinculado</span>
           </div>
         </div>
       </div>
@@ -180,11 +203,19 @@ function Conteudo() {
 
       <div className="tcard">
         {!dados ? (
-          <div className="carregando">Carregando alunos…</div>
+          <div className="carregando">{carregando ? 'Carregando alunos…' : 'Não foi possível carregar a lista.'}</div>
         ) : dados.alunos.length === 0 ? (
           <div className="empty">
             <Ic nome="users" />
-            Nenhum aluno encontrado nesse filtro.
+            {dados.total === 0 && semFiltro ? (
+              <>
+                Nenhum cadastro recebido da catraca ainda.
+                <br />
+                Confira se o agente está online em <Link href="/painel/onboarding">Primeiros passos</Link>.
+              </>
+            ) : (
+              'Nenhum aluno encontrado com esses filtros.'
+            )}
           </div>
         ) : (
           <div className="tw">
@@ -234,13 +265,18 @@ function Conteudo() {
                       )}
                     </td>
                     <td>
-                      {a.pendente ? (
+                      {!a.sincronizado ? (
+                        <span className="pill p-sun">
+                          <Ic nome="refresh" />
+                          Aguardando sincronização
+                        </span>
+                      ) : a.pendente ? (
                         <span className="pill p-sun">
                           <Ic nome="user-off" />
                           Sem responsável
                         </span>
                       ) : (
-                        <span className="pill p-mint">Ativo</span>
+                        <span className="pill p-mint">Sincronizado</span>
                       )}
                     </td>
                     <td className="acts">

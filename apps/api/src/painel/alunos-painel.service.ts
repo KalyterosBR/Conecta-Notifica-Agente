@@ -10,6 +10,7 @@ export class AlunosPainelService {
   constructor(private readonly prisma: PrismaService) {}
 
   async listar(u: ContextoUsuario, f: FiltroAlunosDto) {
+    const base = { schoolId: u.schoolId, active: true };
     const where = {
       schoolId: u.schoolId,
       active: true,
@@ -19,7 +20,7 @@ export class AlunosPainelService {
       ...(f.sem_responsavel ? { guardians: { none: {} } } : {}),
     };
     const pagina = f.pagina ?? 1;
-    const [total, alunos] = await Promise.all([
+    const [total, alunos, totalGeral, sincronizados, aguardandoSincronizacao, semResponsavel] = await Promise.all([
       this.prisma.student.count({ where }),
       this.prisma.student.findMany({
         where,
@@ -28,10 +29,22 @@ export class AlunosPainelService {
         take: POR_PAGINA,
         include: { guardians: { select: { guardianId: true } } },
       }),
+      this.prisma.student.count({ where: base }),
+      this.prisma.student.count({
+        where: { ...base, NOT: { externalId: { startsWith: 'cartao:' } } },
+      }),
+      this.prisma.student.count({ where: { ...base, externalId: { startsWith: 'cartao:' } } }),
+      this.prisma.student.count({ where: { ...base, guardians: { none: {} } } }),
     ]);
     return {
       total,
       pagina,
+      resumo: {
+        total: totalGeral,
+        sincronizados,
+        aguardando_sincronizacao: aguardandoSincronizacao,
+        sem_responsavel: semResponsavel,
+      },
       alunos: alunos.map((a) => ({
         id: a.id,
         external_id: a.externalId,
@@ -40,6 +53,7 @@ export class AlunosPainelService {
         card: a.card,
         responsaveis: a.guardians.length,
         pendente: a.guardians.length === 0,
+        sincronizado: !a.externalId.startsWith('cartao:'),
       })),
     };
   }

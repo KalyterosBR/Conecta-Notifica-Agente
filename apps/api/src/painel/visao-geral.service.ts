@@ -1,16 +1,17 @@
 import { Injectable } from '@nestjs/common';
 import { MessageStatus } from '@prisma/client';
 import { ContextoUsuario } from '../auth/painel.guard';
+import { agenteEstaOnline, statusAgenteParaPainel } from '../agente/status';
 import { PrismaService } from '../prisma/prisma.service';
-import { ProviderConfig } from '../provedores/provedor.interface';
+import { InstanciasService } from '../provedores/instancias.service';
 import { inicioDoDia } from './util';
-
-/** Agente sem heartbeat há mais de 5 min conta como offline (doc §2.5). */
-const LIMITE_OFFLINE_MS = 5 * 60_000;
 
 @Injectable()
 export class VisaoGeralService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly instancias: InstanciasService,
+  ) {}
 
   async resumo(u: ContextoUsuario) {
     const escola = await this.prisma.school.findUnique({
@@ -24,7 +25,7 @@ export class VisaoGeralService {
 
     const hoje = inicioDoDia(escola!.timezone);
     const naEscola = { accessEvent: { schoolId: u.schoolId } };
-    const [eventosHoje, enviadasHoje, entreguesHoje, falhasHoje, semResponsavel, ultimos] =
+    const [eventosHoje, enviadasHoje, entreguesHoje, falhasHoje, semResponsavel, totalAlunos, ultimos, chips] =
       await Promise.all([
         this.prisma.accessEvent.count({
           where: { schoolId: u.schoolId, occurredAt: { gte: hoje } },
@@ -49,26 +50,25 @@ export class VisaoGeralService {
         this.prisma.student.count({
           where: { schoolId: u.schoolId, active: true, guardians: { none: {} } },
         }),
+        this.prisma.student.count({ where: { schoolId: u.schoolId, active: true } }),
         this.prisma.accessEvent.findMany({
           where: { schoolId: u.schoolId },
           orderBy: { occurredAt: 'desc' },
           take: 10,
           include: { student: { select: { id: true, name: true } } },
         }),
+        this.instancias.listar(u.schoolId),
       ]);
 
-    const cfg = (escola!.providerConfig ?? {}) as ProviderConfig;
     return {
       agente: {
-        online:
-          !!chave?.lastSeenAt &&
-          Date.now() - chave.lastSeenAt.getTime() < LIMITE_OFFLINE_MS,
+        online: agenteEstaOnline(chave?.lastSeenAt),
         last_seen_at: chave?.lastSeenAt ?? null,
-        status: chave?.lastStatus ?? null,
+        status: statusAgenteParaPainel(chave?.lastStatus),
       },
       whatsapp: {
-        conectado: cfg.provider === 'uazapi' && !!cfg.uazapi?.token,
-        provider: cfg.provider ?? null,
+        conectado: chips.some((c) => c.conectado),
+        provider: chips.some((c) => c.conectado) ? 'uazapi' : null,
       },
       hoje: {
         eventos: eventosHoje,
@@ -77,6 +77,7 @@ export class VisaoGeralService {
         falhas: falhasHoje,
       },
       alunos_sem_responsavel: semResponsavel,
+      alunos_total: totalAlunos,
       ultimos_acessos: ultimos.map((e) => ({
         id: e.id,
         aluno: e.student.name,

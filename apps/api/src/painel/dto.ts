@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
   Matches,
   Max,
@@ -140,6 +141,7 @@ export class AtualizarRegrasDto {
 
 export class ConectarWhatsappDto {
   @IsString()
+  @IsUrl({ protocols: ['http', 'https'], require_protocol: true, require_tld: false })
   @MaxLength(300)
   base_url: string;
 

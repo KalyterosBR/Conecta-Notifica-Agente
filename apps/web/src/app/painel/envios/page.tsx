@@ -113,6 +113,15 @@ function Conteudo() {
         </div>
       </div>
 
+      <div className="onb-dica" style={{ marginBottom: 16 }}>
+        <Ic nome="info-circle" />
+        <span>
+          <b>Como ler os status:</b> “Enviado” significa que o provedor aceitou o aviso para envio.
+          “Entregue” e “Lido” dependem de confirmação posterior do WhatsApp; por isso, um aviso enviado
+          pode continuar sem confirmação. “Falha” indica que o envio não foi concluído.
+        </span>
+      </div>
+
       {erro && <div className="erro-inline">{erro}</div>}
 
       <div className="stats">
@@ -153,7 +162,9 @@ function Conteudo() {
         ) : lista.length === 0 ? (
           <div className="empty">
             <Ic nome="send" />
-            Nenhum envio nesse filtro.
+            {total === 0 && status === 'todos' && !busca.trim()
+              ? 'Ainda não há avisos enviados. Confira o agente, o WhatsApp e os responsáveis para preparar o primeiro envio.'
+              : 'Nenhum envio corresponde à busca e ao status selecionados.'}
           </div>
         ) : (
           <div className="tw">

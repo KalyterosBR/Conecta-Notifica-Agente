@@ -23,12 +23,6 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="pt-BR">
       <body className={`${titulo.variable} ${corpo.variable}`}>
-        {/* ícones Tabler (mesma webfont do mockup); o React iça o link para o head */}
-        <link
-          rel="stylesheet"
-          precedence="default"
-          href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.30.0/dist/tabler-icons.min.css"
-        />
         {children}
       </body>
     </html>

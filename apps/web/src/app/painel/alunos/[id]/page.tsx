@@ -8,6 +8,7 @@ import {
   AvatarAluno,
   AvIniciais,
   Ic,
+  mascaraTelefone,
   paraE164,
   PillEvento,
   quandoCurto,
@@ -137,7 +138,9 @@ export default function PaginaAluno() {
       {formAberto && (
         <FormResponsavel
           alunoId={aluno.id}
+          aoCancelar={() => setFormAberto(false)}
           aoSalvar={() => {
+            window.dispatchEvent(new Event('conecta:painel-atualizado'));
             setFormAberto(false);
             carregar();
             toast('Responsável cadastrado');
@@ -209,7 +212,7 @@ export default function PaginaAluno() {
                         <span
                           className="pill p-sun"
                           style={{ cursor: 'pointer' }}
-                          title="Clique para registrar opt-in"
+                          title="Clique para registrar autorização para receber avisos"
                           onClick={() => mudarOptIn(r.id, true)}
                         >
                           <Ic nome="clock" />
@@ -220,14 +223,18 @@ export default function PaginaAluno() {
                     <td>
                       <button
                         className={`toggle${r.notify_entry ? ' on' : ''}`}
-                        aria-label="Avisar na entrada"
+                        role="switch"
+                        aria-checked={r.notify_entry}
+                        aria-label={`Avisos de entrada: ${r.notify_entry ? 'ativados' : 'desativados'}`}
                         onClick={() => mudarVinculo(r.id, 'notify_entry', !r.notify_entry)}
                       />
                     </td>
                     <td>
                       <button
                         className={`toggle${r.notify_exit ? ' on' : ''}`}
-                        aria-label="Avisar na saída"
+                        role="switch"
+                        aria-checked={r.notify_exit}
+                        aria-label={`Avisos de saída: ${r.notify_exit ? 'ativados' : 'desativados'}`}
                         onClick={() => mudarVinculo(r.id, 'notify_exit', !r.notify_exit)}
                       />
                     </td>
@@ -271,7 +278,7 @@ export default function PaginaAluno() {
 
 const RELACOES = ['Mãe', 'Pai', 'Avó', 'Avô', 'Tia', 'Tio', 'Responsável legal', 'Outro'];
 
-function FormResponsavel({ alunoId, aoSalvar }: { alunoId: string; aoSalvar: () => void }) {
+function FormResponsavel({ alunoId, aoSalvar, aoCancelar }: { alunoId: string; aoSalvar: () => void; aoCancelar: () => void }) {
   const [nome, setNome] = useState('');
   const [telefone, setTelefone] = useState('');
   const [relacao, setRelacao] = useState('Mãe');
@@ -336,8 +343,11 @@ function FormResponsavel({ alunoId, aoSalvar }: { alunoId: string; aoSalvar: () 
         <div className="field">
           <label>WhatsApp</label>
           <input
+            type="tel"
+            inputMode="tel"
+            autoComplete="tel"
             value={telefone}
-            onChange={(e) => setTelefone(e.target.value)}
+            onChange={(e) => setTelefone(mascaraTelefone(e.target.value))}
             required
             placeholder="(81) 99999-0000"
           />
@@ -352,38 +362,52 @@ function FormResponsavel({ alunoId, aoSalvar }: { alunoId: string; aoSalvar: () 
         </div>
         <div className="field">
           <label>Avisar em</label>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-            <label className="switch">
-              <button
-                type="button"
-                className={`toggle${entrada ? ' on' : ''}`}
-                onClick={() => setEntrada((v) => !v)}
-              />
+          <div className="resp-switches">
+            <button
+              type="button"
+              className="resp-switch"
+              role="switch"
+              aria-checked={entrada}
+              onClick={() => setEntrada((v) => !v)}
+            >
+              <span className={`resp-toggle${entrada ? ' on' : ''}`} aria-hidden="true" />
               Entrada
-            </label>
-            <label className="switch">
-              <button
-                type="button"
-                className={`toggle${saida ? ' on' : ''}`}
-                onClick={() => setSaida((v) => !v)}
-              />
+            </button>
+            <button
+              type="button"
+              className="resp-switch"
+              role="switch"
+              aria-checked={saida}
+              onClick={() => setSaida((v) => !v)}
+            >
+              <span className={`resp-toggle${saida ? ' on' : ''}`} aria-hidden="true" />
               Saída
-            </label>
+            </button>
           </div>
         </div>
       </div>
-      <label className="switch" style={{ marginBottom: 14 }}>
-        <button
-          type="button"
-          className={`toggle${optIn ? ' on' : ''}`}
-          onClick={() => setOptIn((v) => !v)}
-        />
-        O responsável autorizou receber avisos por WhatsApp (consentimento LGPD)
-      </label>
-      <button className="btn" disabled={salvando}>
-        <Ic nome="device-floppy" />
-        {salvando ? 'Salvando…' : 'Salvar responsável'}
+      <button
+        type="button"
+        className="resp-consentimento"
+        role="switch"
+        aria-checked={optIn}
+        onClick={() => setOptIn((v) => !v)}
+      >
+        <span className={`resp-toggle${optIn ? ' on' : ''}`} aria-hidden="true" />
+        <span>
+          <b>Autorizou receber avisos por WhatsApp?</b>
+          <small>Ative somente após confirmar o consentimento do responsável.</small>
+        </span>
       </button>
+      <div className="resp-form-actions">
+        <button type="button" className="btn white" onClick={aoCancelar} disabled={salvando}>
+          Cancelar
+        </button>
+        <button className="btn" disabled={salvando}>
+          <Ic nome="device-floppy" />
+          {salvando ? 'Salvando…' : 'Salvar responsável'}
+        </button>
+      </div>
     </form>
   );
 }

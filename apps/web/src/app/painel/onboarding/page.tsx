@@ -7,6 +7,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ConexaoWhatsapp, Onboarding, api } from '@/lib/api';
 import { Ic, quandoCurto, useToast } from '@/lib/ui';
 
+const URL_API_AGENTE = 'https://painel.conectapontoeacesso.com.br/api';
+
 export default function PaginaOnboarding() {
   const [o, setO] = useState<Onboarding | null>(null);
   const [erro, setErro] = useState('');
@@ -123,7 +125,17 @@ export default function PaginaOnboarding() {
               </span>
               <span className="onb-txt">
                 <b>{p.titulo}</b>
-                <small>{p.detalhe}</small>
+                <small>
+                  {p.detalhe}
+                  {p.id === 'agente' && o.agente.last_seen_at
+                    ? ` · Último sinal ${quandoCurto(o.agente.last_seen_at)}`
+                    : ''}
+                </small>
+                {p.id === 'agente' && o.agente.last_seen_at && (
+                  <span className={`pill ${o.agente.online ? 'p-mint' : 'p-coral'}`}>
+                    {o.agente.online ? 'Online agora' : 'Offline agora'}
+                  </span>
+                )}
               </span>
               <Ic nome={expandido ? 'chevron-up' : 'chevron-down'} />
             </button>
@@ -133,17 +145,35 @@ export default function PaginaOnboarding() {
                 {p.id === 'agente' && (
                   <>
                     <p>
-                      O agente é um programa que roda no computador da escola, lê os giros da
-                      catraca no SQL Server e envia para cá. Ele precisa de duas informações:
+                      O agente é um programa que roda no computador da escola, lê os eventos da
+                      catraca no SQL Server e envia para cá. Para instalar, use a Central do Agente
+                      no computador da escola e informe os dados da catraca, o endereço da API e a
+                      chave da escola:
                     </p>
-                    <div className="field">
-                      <label>Endereço do servidor (vai no <code>config.yaml</code>)</label>
-                      <div className="keybox">
-                        <span>{o.url_agente ?? 'defina PUBLIC_API_URL na API'}</span>
-                        {o.url_agente && (
-                          <Ic nome="copy" title="Copiar" onClick={() => copiar(o.url_agente!, toast)} />
-                        )}
+                    <div className="onb-download">
+                      <div>
+                        <b>Agente Conecta Notifica para Windows</b>
+                        <small>Baixe o instalador oficial mais recente para o computador da escola.</small>
                       </div>
+                      <a
+                        className="btn"
+                        href="https://github.com/KalyterosBR/Conecta-Notifica-Agente/releases/latest"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        <Ic nome="download" />
+                        Baixar agente
+                      </a>
+                    </div>
+                    <div className="field">
+                      <label>Endereço da API Conecta Notifica</label>
+                      <div className="keybox">
+                        <span>{URL_API_AGENTE}</span>
+                        <Ic nome="copy" title="Copiar" onClick={() => copiar(URL_API_AGENTE, toast)} />
+                      </div>
+                      <small className="hint">
+                        API oficial do Conecta Notifica. O agente enviará os dados para o painel publicado.
+                      </small>
                     </div>
                     {chave ? (
                       <div className="field">
@@ -161,13 +191,22 @@ export default function PaginaOnboarding() {
                         {o.agente.chave_criada_em ? 'Gerar chave nova' : 'Gerar a chave do agente'}
                       </button>
                     )}
-                    <p className="onb-dica">
-                      <Ic nome="info-circle" />
-                      No computador da escola: descompacte o instalador em <code>C:\ConectaNotifica</code>,
-                      preencha o <code>config.yaml</code> com o endereço e a chave acima, e rode{' '}
-                      <code>INSTALAR.bat</code> como administrador. O passo fecha sozinho no primeiro
-                      sinal que chegar.
-                    </p>
+                    <aside className="onb-dica onb-dica-agente">
+                      <span className="onb-dica-icone"><Ic nome="info-circle" /></span>
+                      <div className="onb-dica-conteudo">
+                        <b>Como concluir a instalação</b>
+                        <p>
+                          No computador da escola, execute o instalador e abra a Central do Agente
+                          como administrador. Informe os dados SQL, o endereço da API e a chave da
+                          escola; depois clique em <b>Testar conexões</b> e instale o serviço.
+                        </p>
+                        <p className="onb-dica-secundaria">
+                          Se o agente já estiver instalado, mas offline, confira o serviço e o teste
+                          de conexões na Central. Os novos acessos só chegam ao painel enquanto ele
+                          estiver conectado.
+                        </p>
+                      </div>
+                    </aside>
                   </>
                 )}
 
@@ -221,7 +260,7 @@ export default function PaginaOnboarding() {
                     <p>
                       {o.alunos.total === 0
                         ? 'Os alunos aparecem aqui automaticamente assim que o agente sincronizar o cadastro da catraca. Nada precisa ser digitado.'
-                        : `${o.alunos.total} aluno(s) sincronizados da catraca e ${o.alunos.responsaveis} responsável(is) cadastrados. Falta vincular ${o.alunos.sem_responsavel}.`}
+                        : `${o.alunos.sincronizados} ${o.alunos.sincronizados === 1 ? 'aluno sincronizado' : 'alunos sincronizados'} da catraca; ${o.alunos.aguardando_sincronizacao} ${o.alunos.aguardando_sincronizacao === 1 ? 'aluno aguarda' : 'alunos aguardam'} cadastro completo. Há ${o.alunos.sem_responsavel} ${o.alunos.sem_responsavel === 1 ? 'aluno' : 'alunos'} sem responsável e ${o.alunos.responsaveis} ${o.alunos.responsaveis === 1 ? 'responsável cadastrado' : 'responsáveis cadastrados'}.`}
                     </p>
                     <div className="onb-acoes">
                       <Link href="/painel/responsaveis" className="btn">
@@ -235,8 +274,8 @@ export default function PaginaOnboarding() {
                     </div>
                     <p className="onb-dica">
                       <Ic nome="shield-check" />
-                      Um responsável só recebe mensagem depois do opt-in — é a exigência da LGPD, e
-                      o sistema não envia sem ele.
+                      Um responsável só recebe avisos depois de autorizar o recebimento — exigência
+                      da LGPD. O sistema não envia antes de essa autorização ser registrada.
                     </p>
                   </>
                 )}

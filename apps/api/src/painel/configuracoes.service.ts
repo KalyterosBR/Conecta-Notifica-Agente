@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
+import { agenteEstaOnline, statusAgenteParaPainel } from '../agente/status';
 import { ContextoUsuario } from '../auth/painel.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProviderConfig } from '../provedores/provedor.interface';
@@ -29,6 +30,7 @@ export class ConfiguracoesService {
     const cfg = (escola!.providerConfig ?? {}) as ProviderConfig;
     const chips = await this.instancias.listar(u.schoolId);
     const alunos = await this.prisma.student.count({ where: { schoolId: u.schoolId } });
+    const apiPublica = process.env.PUBLIC_API_URL?.trim().replace(/\/+$/, '') || null;
     return {
       escola: { name: escola!.name, timezone: escola!.timezone, plan: escola!.plan },
       // O que o contrato libera — a escola vê o teto, o admin é quem muda.
@@ -48,6 +50,8 @@ export class ConfiguracoesService {
       agente: {
         chave_criada_em: chave?.createdAt ?? null,
         last_seen_at: chave?.lastSeenAt ?? null,
+        online: agenteEstaOnline(chave?.lastSeenAt),
+        status: statusAgenteParaPainel(chave?.lastStatus),
       },
       whatsapp: {
         provider: cfg.provider ?? 'uazapi',
@@ -57,6 +61,10 @@ export class ConfiguracoesService {
         pode_adicionar: chips.length < escola!.maxInstances && !escola!.blocked,
         // token nunca volta ao painel; só sinalizamos que existe.
         webhook_token: cfg.webhook_token ?? null,
+        webhook_url:
+          apiPublica && cfg.webhook_token
+            ? `${apiPublica}/v1/webhooks/uazapi/${cfg.webhook_token}`
+            : null,
         // O painel mostra o QR quando dá para criar a instância (conta do
         // SaaS) ou quando a escola já tem uma — reconectar dispensa admintoken.
         qr_disponivel: this.uazapi.podeCriarInstancia || chips.length > 0,

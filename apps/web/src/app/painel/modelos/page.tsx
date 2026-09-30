@@ -10,12 +10,12 @@ import { Ic, useToast } from '@/lib/ui';
 type ChaveTpl = 'in' | 'out' | 'optin';
 
 const OPTIN_PADRAO =
-  'Olá {responsavel}! Aqui é a {escola}. Vamos te avisar por aqui sempre que {aluno} entrar ou sair da escola. Responda SIM para confirmar. Para parar de receber, responda PARAR a qualquer momento.';
+  'Olá {responsavel}! Aqui é {escola}. Vamos te avisar por aqui sempre que {aluno} entrar ou sair da escola. Responda SIM para confirmar. Para parar de receber, responda PARAR a qualquer momento.';
 
 const ABAS: { chave: ChaveTpl; icone: string; nome: string }[] = [
   { chave: 'in', icone: 'login', nome: 'Entrada' },
   { chave: 'out', icone: 'logout', nome: 'Saída' },
-  { chave: 'optin', icone: 'shield-check', nome: 'Confirmação de opt-in' },
+  { chave: 'optin', icone: 'shield-check', nome: 'Autorização para receber avisos' },
 ];
 
 const CHAVE_LOCAL = 'cn_modelo_optin';
@@ -194,7 +194,7 @@ export default function PaginaModelos() {
             />
             <div className="hint">
               {aba === 'optin'
-                ? 'O convite de opt-in ainda não é disparado pelo sistema: copie este texto para enviar aos responsáveis. Fica salvo neste navegador.'
+                ? 'Este convite de autorização ainda não é enviado automaticamente: copie o texto para enviar aos responsáveis. O rascunho fica salvo neste navegador.'
                 : 'Toque em uma variável para inserir no texto. O que você salvar aqui vale para os próximos avisos; o que já foi enviado não muda.'}
             </div>
           </div>
