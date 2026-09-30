@@ -509,7 +509,16 @@ internal sealed class CentralForm : Form
             var raiz = doc.RootElement;
             var tag = Texto(raiz, "tag_name", "versão desconhecida");
             var html = Texto(raiz, "html_url", "https://github.com/KalyterosBR/Conecta-Notifica-Agente/releases");
-            var mensagem = "Versão instalada: " + versaoAtual + "\r\nVersão publicada: " + tag + "\r\n\r\nA central não baixa nem instala atualizações automaticamente. Deseja abrir a página da versão?";
+            var instaladaEhTeste = versaoAtual.Contains("-dev", StringComparison.OrdinalIgnoreCase) ||
+                                   versaoAtual.Equals("dev", StringComparison.OrdinalIgnoreCase);
+            var publicada = tag.StartsWith("v", StringComparison.OrdinalIgnoreCase) ? tag[1..] : tag;
+            var estadoVersao = instaladaEhTeste
+                ? "Esta instalação é uma build de teste/desenvolvimento. Ela não representa a versão oficial distribuída."
+                : string.Equals(versaoAtual, publicada, StringComparison.OrdinalIgnoreCase)
+                    ? "Este agente corresponde à versão oficial publicada mais recente."
+                    : "Há uma versão oficial diferente da instalada. Confira os detalhes antes de atualizar. ";
+            var mensagem = "Instalada: " + versaoAtual + "\r\nOficial publicada: " + tag + "\r\n\r\n" + estadoVersao +
+                           "\r\n\r\nA central não baixa nem instala atualizações automaticamente. Deseja abrir a página da versão oficial?";
             if (MessageBox.Show(this, mensagem, "Atualizações", MessageBoxButtons.YesNo, MessageBoxIcon.Information) == DialogResult.Yes)
                 Process.Start(new ProcessStartInfo(html) { UseShellExecute = true });
             RegistrarHistorico("Consulta de atualização concluída.");

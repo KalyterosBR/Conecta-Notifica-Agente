@@ -2,9 +2,11 @@
 
 ## O caminho normal: o instalador
 
-Baixe `ConectaNotifica-Agente-<versão>.exe` (Actions → *Agente Windows* →
-artefato, ou a release no GitHub), copie para a máquina da escola e dê dois
-cliques. São quatro telas de "Avançar":
+Baixe o instalador oficial `ConectaNotifica-Agente-<versão>.exe` na página de
+releases do GitHub, copie para a máquina da escola e dê dois cliques. Não use
+artefatos identificados como `TESTE` ou versões com `-dev`: são compilações de
+validação. Veja [VERSOES.md](VERSOES.md) para o processo de publicação.
+São quatro telas de "Avançar":
 
 1. **Pasta** — `C:\ConectaNotifica` por padrão.
 2. **Conta da escola** — o endereço do Conecta Notifica e a **chave da
@@ -58,9 +60,10 @@ anterior — reconfigurar não custa a configuração que funcionava.
 
 `notifica-agent bandeja` abre o monitor: um ícone na área de notificação que
 mostra, no tooltip e no menu do botão direito, se o agente está conectado,
-quantos giros estão na fila e quantos saíram hoje. Duplo clique mostra o
-painel gráfico; o menu tem "Abrir central do agente", "Abrir a pasta do
-agente", "Testar conexões" e "Sair".
+quantos giros estão na fila e quantos saíram hoje. Duplo clique ou a opção
+"Abrir central do agente" abre a Central C# instalada; builds sem a Central
+continuam usando o painel local no navegador como fallback. O menu também tem
+"Abrir a pasta do agente", "Testar conexões" e "Sair".
 
 Ele **não** fala com o banco nem com o SaaS: lê o `dados/estado.json` que o
 serviço publica a cada heartbeat. Por isso funciona mesmo com o serviço

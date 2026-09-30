@@ -1,4 +1,6 @@
-VERSAO ?= $(shell git describe --tags --always 2>/dev/null || echo dev)
+VERSAO ?= $(shell printf '%s-dev.local' "$$(cat VERSION 2>/dev/null || echo 0.0.0)")
+VERSAO_BASE := $(firstword $(subst -, ,$(VERSAO)))
+VERSAO_ARQUIVO := $(VERSAO_BASE).0
 LDFLAGS := -s -w -X main.Versao=$(VERSAO)
 
 .PHONY: build resources windows gui-windows instalador tidy vet test limpar
@@ -17,7 +19,9 @@ windows: resources
 	go build -ldflags "-H=windowsgui -X main.Versao=$(VERSAO)" -o bin/notifica-core.exe ./cmd/agent
 
 gui-windows:
-	dotnet publish gui/ConectaNotificaAgente.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o bin/gui-publish
+	dotnet publish gui/ConectaNotificaAgente.csproj -c Release -r win-x64 --self-contained true \
+		-p:PublishSingleFile=true -p:Version=$(VERSAO) -p:InformationalVersion=$(VERSAO) \
+		-p:AssemblyVersion=$(VERSAO_ARQUIVO) -p:FileVersion=$(VERSAO_ARQUIVO) -o bin/gui-publish
 	cp bin/gui-publish/ConectaNotificaAgente.exe bin/ConectaNotificaAgente.exe
 
 # Instalador do Windows. Só compila em Windows com Inno Setup 6 instalado;

@@ -1,8 +1,7 @@
 # Compila o agente e gera o instalador do Windows.
 #
-# Existe porque o instalador só compila em Windows (Inno Setup) e o Go não
-# roda na máquina de desenvolvimento — este workflow é o que verifica e
-# publica o .exe que a escola baixa.
+# Builds de branch/execução manual são artefatos de TESTE. Somente uma release
+# publicada com tag SemVer gera o instalador oficial anexado à release.
 name: Agente Windows
 
 on:
@@ -58,14 +57,59 @@ jobs:
 
       - name: Versão
         id: versao
+        env:
+          EVENTO: ${{ github.event_name }}
+          TAG_RELEASE: ${{ github.event.release.tag_name }}
+          PRE_RELEASE: ${{ github.event.release.prerelease }}
+          NUMERO_EXECUCAO: ${{ github.run_number }}
+          TENTATIVA: ${{ github.run_attempt }}
         run: |
-          $v = git describe --tags --always 2>$null
-          if (-not $v) { $v = "0.0.0-dev" }
-          $v = $v -replace '^v',''
-          "versao=$v" >> $env:GITHUB_OUTPUT
+          $base = (Get-Content VERSION -Raw).Trim()
+          if ($base -notmatch '^\d+\.\d+\.\d+$') {
+            throw "VERSION deve conter uma versão estável X.Y.Z; encontrado: $base"
+          }
+
+          if ($env:EVENTO -eq 'release') {
+            if ($env:PRE_RELEASE -eq 'True') {
+              throw 'Releases de teste/pré-lançamento não geram instaladores oficiais. Use o artefato TESTE do workflow.'
+            }
+            if ($env:TAG_RELEASE -notmatch '^v\d+\.\d+\.\d+$') {
+              throw "Release oficial exige tag vX.Y.Z; encontrado: $env:TAG_RELEASE"
+            }
+            if ($env:TAG_RELEASE -ne "v$base") {
+              throw "A tag $env:TAG_RELEASE não corresponde a apps/agent/VERSION ($base). Atualize VERSION antes de publicar."
+            }
+            $versao = $env:TAG_RELEASE.Substring(1)
+            $canal = 'OFICIAL'
+          } else {
+            $sha = (git rev-parse --short=7 HEAD).Trim()
+            $versao = "$base-dev.$($env:NUMERO_EXECUCAO).$($env:TENTATIVA).$sha"
+            $canal = 'TESTE'
+          }
+
+          "versao=$versao" >> $env:GITHUB_OUTPUT
+          "canal=$canal" >> $env:GITHUB_OUTPUT
 
       # Sem -s -w de propósito: binário com símbolos dispara bem menos falso
       # positivo no Defender/SmartScreen (mesma razão do Makefile).
+      - name: Carimbar versão nos recursos do Windows
+        env:
+          VERSAO: ${{ steps.versao.outputs.versao }}
+        run: |
+          $base = ($env:VERSAO -split '-', 2)[0]
+          $partes = $base.Split('.')
+          $infoPath = 'cmd/agent/versioninfo.json'
+          $info = Get-Content $infoPath -Raw | ConvertFrom-Json -AsHashtable
+          $info.FixedFileInfo.FileVersion.Major = [int]$partes[0]
+          $info.FixedFileInfo.FileVersion.Minor = [int]$partes[1]
+          $info.FixedFileInfo.FileVersion.Patch = [int]$partes[2]
+          $info.FixedFileInfo.ProductVersion.Major = [int]$partes[0]
+          $info.FixedFileInfo.ProductVersion.Minor = [int]$partes[1]
+          $info.FixedFileInfo.ProductVersion.Patch = [int]$partes[2]
+          $info.StringFileInfo.FileVersion = $env:VERSAO
+          $info.StringFileInfo.ProductVersion = $env:VERSAO
+          $info | ConvertTo-Json -Depth 8 | Set-Content -Path $infoPath -Encoding utf8NoBOM
+
       - name: Gerar recursos do Windows
         run: |
           Push-Location cmd/agent
@@ -80,8 +124,14 @@ jobs:
         run: go build -ldflags "-H=windowsgui -X main.Versao=${{ steps.versao.outputs.versao }}" -o bin/notifica-core.exe ./cmd/agent
 
       - name: Compilar a Central do Agente
+        env:
+          VERSAO: ${{ steps.versao.outputs.versao }}
         run: |
-          dotnet publish gui\ConectaNotificaAgente.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -o bin\gui-publish
+          $base = ($env:VERSAO -split '-', 2)[0]
+          $fileVersion = "$base.0"
+          dotnet publish gui\ConectaNotificaAgente.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:Version=$env:VERSAO -p:InformationalVersion=$env:VERSAO `
+            -p:AssemblyVersion=$fileVersion -p:FileVersion=$fileVersion -o bin\gui-publish
           Copy-Item bin\gui-publish\ConectaNotificaAgente.exe bin\ConectaNotificaAgente.exe
 
       - name: Instalar o Inno Setup
@@ -95,12 +145,12 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ConectaNotifica-Agente-${{ steps.versao.outputs.versao }}
+          name: ConectaNotifica-Agente-${{ steps.versao.outputs.canal }}-${{ steps.versao.outputs.versao }}
           path: apps/agent/dist/*.exe
           if-no-files-found: error
 
       - name: Anexar à release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' && !github.event.release.prerelease
         uses: softprops/action-gh-release@v2
         with:
           files: apps/agent/dist/*.exe

@@ -49,11 +49,13 @@ Source: "..\bin\{#CoreExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\bin\{#GuiExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\scripts\usuario-somente-leitura.sql"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "..\scripts\descoberta.sql"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "..\docs\GUIA-INSTALACAO-CATRACAS-TOPDATA.md"; DestDir: "{app}\docs"; Flags: ignoreversion
 Source: "..\README.md"; DestDir: "{app}"; DestName: "LEIA-ME.txt"; Flags: ignoreversion isreadme
 Source: "assets\hero-agente-conecta.bmp"; Flags: dontcopy
 
 [Icons]
 Name: "{group}\Agente Conecta Notifica"; Filename: "{app}\{#GuiExe}"; WorkingDir: "{app}"; IconFilename: "{app}\{#GuiExe}"
+Name: "{group}\Guia de instalação Topdata"; Filename: "{sys}\notepad.exe"; Parameters: """{app}\docs\GUIA-INSTALACAO-CATRACAS-TOPDATA.md"""
 Name: "{autodesktop}\Agente Conecta Notifica"; Filename: "{app}\{#GuiExe}"; WorkingDir: "{app}"; IconFilename: "{app}\{#GuiExe}"; Tasks: desktopicon
 Name: "{group}\Monitor (ícone ao lado do relógio)"; Filename: "{app}\{#CoreExe}"; Parameters: "bandeja -config ""{app}\config.yaml"""; WorkingDir: "{app}"
 Name: "{group}\Desinstalar"; Filename: "{uninstallexe}"

@@ -137,6 +137,7 @@ type bandeja struct {
 	hwnd     windows.HWND
 	dados    string
 	exe      string
+	central  string
 	iconeOK  windows.Handle
 	iconeErr windows.Handle
 	// último resumo mostrado, para não reescrever o tooltip a cada tique
@@ -147,8 +148,8 @@ type bandeja struct {
 var b *bandeja
 
 // Rodar mostra o ícone e só volta quando o usuário escolhe Sair.
-func Rodar(dirDados, exe string) error {
-	b = &bandeja{dados: estado.Caminho(dirDados), exe: exe}
+func Rodar(dirDados, exe, central string) error {
+	b = &bandeja{dados: estado.Caminho(dirDados), exe: exe, central: central}
 
 	instancia, _, _ := procGetModuleHandle.Call(0)
 	b.iconeOK = carregarIconeDoExe(windows.Handle(instancia))
@@ -338,6 +339,10 @@ func (t *bandeja) abrirPasta() {
 }
 
 func (t *bandeja) abrirPainel() {
+	if t.central != "" {
+		abrir(t.central, "")
+		return
+	}
 	abrir(t.exe, "painel")
 }
 

@@ -196,7 +196,14 @@ func executar(comando, caminhoConfig string) error {
 		if err != nil {
 			exe = "notifica-agent.exe"
 		}
-		return bandeja.Rodar(cfg.Armazenamento.Diretorio, exe)
+		// Em instalações distribuídas, o duplo clique no monitor abre a
+		// Central C# nativa. O painel local no navegador fica como fallback
+		// para builds de desenvolvimento que não incluem a GUI.
+		central := filepath.Join(baseDir, "ConectaNotificaAgente.exe")
+		if _, err := os.Stat(central); err != nil {
+			central = ""
+		}
+		return bandeja.Rodar(cfg.Armazenamento.Diretorio, exe, central)
 	case "descobrir":
 		return descobrir(cfg)
 	case "testar":

@@ -84,6 +84,11 @@ O caminho normal é o **instalador do Windows**: um `.exe` com telas de
 [INSTALACAO.md](INSTALACAO.md); o instalador é gerado pelo CI a cada push em
 `apps/agent`.
 
+Para preparar ou diagnosticar a comunicação entre equipamentos Topdata,
+TopPortaria, serviços locais e Windows Firewall, consulte o
+[Guia de instalação e diagnóstico Topdata](docs/GUIA-INSTALACAO-CATRACAS-TOPDATA.md).
+O instalador também coloca esse guia em `docs` e cria um atalho para abri-lo.
+
 Antes, no SSMS: criar o usuário de leitura com
 [`scripts/usuario-somente-leitura.sql`](scripts/usuario-somente-leitura.sql).
 
