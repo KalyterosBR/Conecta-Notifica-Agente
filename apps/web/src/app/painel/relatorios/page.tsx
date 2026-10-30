@@ -109,7 +109,7 @@ export default function PaginaRelatorios() {
               </div>
             </div>
             {tabela ? (
-              <div className="gtabela">
+              <div className="gtabela tw">
                 <table className="adm-tabela">
                   <thead>
                     <tr>

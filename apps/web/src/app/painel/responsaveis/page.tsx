@@ -135,19 +135,94 @@ export default function PaginaResponsaveis() {
           <Ic nome="file-spreadsheet" />
           Como montar a planilha
         </summary>
-        <p>
-          Salve como <b>CSV</b> com estas colunas na primeira linha. O aluno é encontrado pelo
-          mesmo código que a catraca usa — é o que aparece na tela de Alunos.
+
+        <ol className="imp-passos">
+          <li>
+            Abra o Excel (ou o Google Planilhas) e crie uma planilha nova.
+          </li>
+          <li>
+            <p className="imp-passo-texto">
+              Na <b>primeira linha</b>, escreva exatamente estes títulos das colunas:
+            </p>
+            <div className="imp-colunas" role="list">
+              <span role="listitem">
+                <strong>matricula</strong>
+                <small>código do aluno</small>
+              </span>
+              <span role="listitem">
+                <strong>nome</strong>
+                <small>do responsável</small>
+              </span>
+              <span role="listitem">
+                <strong>telefone</strong>
+                <small>WhatsApp com DDD</small>
+              </span>
+              <span role="listitem">
+                <strong>parentesco</strong>
+                <small>mãe, pai… (opcional)</small>
+              </span>
+            </div>
+          </li>
+          <li>
+            Em cada linha seguinte, preencha um responsável. A <b>matrícula</b> é o mesmo
+            código que aparece na tela <Link href="/painel/alunos">Alunos</Link> (coluna
+            Matrícula) — é assim que o sistema liga o responsável ao aluno certo.
+          </li>
+          <li>
+            Se o mesmo pai ou mãe cuida de mais de um aluno, <b>repita o telefone</b> em
+            outra linha com a matrícula do outro filho. O sistema une tudo em um único
+            cadastro, sem duplicar.
+          </li>
+          <li>
+            Salve o arquivo como <b>CSV</b> (no Excel: Arquivo → Salvar como → CSV) e use o
+            botão <b>Importar planilha</b> acima.
+          </li>
+        </ol>
+
+        <p className="imp-exemplo-titulo">Exemplo pronto para copiar:</p>
+        <div className="imp-tabela-wrap">
+          <table className="imp-tabela-exemplo">
+            <thead>
+              <tr>
+                <th>matricula</th>
+                <th>nome</th>
+                <th>telefone</th>
+                <th>parentesco</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1001</td>
+                <td>Maria da Silva</td>
+                <td>(81) 99999-0000</td>
+                <td>mãe</td>
+              </tr>
+              <tr>
+                <td>1002</td>
+                <td>João Souza</td>
+                <td>(81) 98888-7777</td>
+                <td>pai</td>
+              </tr>
+              <tr>
+                <td>1003</td>
+                <td>Maria da Silva</td>
+                <td>(81) 99999-0000</td>
+                <td>mãe</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p className="imp-dica">
+          No exemplo, Maria aparece duas vezes (alunos 1001 e 1003) com o mesmo telefone —
+          depois da importação ela fica como <b>um</b> responsável com dois filhos.
         </p>
-        <pre className="imp-exemplo">
-{`aluno_external_id;nome;telefone;parentesco
-1001;Maria da Silva;(81) 99999-0000;mãe
-1002;João Souza;81988887777;pai`}
-        </pre>
-        <p>
-          Telefone aceita o formato que a secretaria já usa. Um mesmo telefone em vários alunos
-          vira <b>um responsável com vários filhos</b>, não cópias.
-        </p>
+        <div className="imp-acoes">
+          <a className="btn ghost" href={urlModeloCsv()} download="modelo-responsaveis.csv">
+            <Ic nome="download" />
+            Baixar modelo CSV
+          </a>
+          <span className="mut">Abra no Excel, preencha e importe.</span>
+        </div>
       </details>
 
       <div className="fbar">
@@ -187,78 +262,83 @@ export default function PaginaResponsaveis() {
               : 'Nenhum responsável ainda. Importe a planilha ou cadastre pela ficha de um aluno.'}
           </div>
         ) : (
-          <table className="adm-tabela">
-            <thead>
-              <tr>
-                <th>Responsável</th>
-                <th>Telefone</th>
-                <th>Alunos</th>
-                <th>Avisos</th>
-                <th>LGPD</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lista.responsaveis.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <b>{r.name}</b>
-                    {r.relation && <small className="rel"> · {r.relation}</small>}
-                  </td>
-                  <td className="tel-col">{formatarTelefone(r.phone)}</td>
-                  <td>
-                    {r.alunos.length === 0 ? (
-                      <span className="pill p-sun">sem aluno</span>
-                    ) : (
-                      <div className="chips-alunos">
-                        {r.alunos.map((a) => (
-                          <Link key={a.id} href={`/painel/alunos/${a.id}`} className="chip-aluno">
-                            {a.name}
-                            {a.class_name && <small>{a.class_name}</small>}
-                          </Link>
-                        ))}
-                      </div>
-                    )}
-                  </td>
-                  <td>
-                    <Avisos r={r} />
-                  </td>
-                  <td>
-                    {r.opt_in ? (
-                      <span className="pill p-mint">
-                        <Ic nome="shield-check" />
-                        Autorizado
-                      </span>
-                    ) : (
-                      <span className="pill p-coral" title="Sem autorização, o sistema não envia avisos">
-                        <Ic nome="shield-x" />
-                        Sem autorização
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            <div className="tw">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Responsável</th>
+                    <th>Telefone</th>
+                    <th>Alunos</th>
+                    <th>Avisos</th>
+                    <th>LGPD</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lista.responsaveis.map((r) => (
+                    <tr key={r.id}>
+                      <td>
+                        <b>{r.name}</b>
+                        {r.relation && <small className="rel"> · {r.relation}</small>}
+                      </td>
+                      <td className="tel-col">{formatarTelefone(r.phone)}</td>
+                      <td>
+                        {r.alunos.length === 0 ? (
+                          <span className="pill p-sun">sem aluno</span>
+                        ) : (
+                          <div className="chips-alunos">
+                            {r.alunos.map((a) => (
+                              <Link key={a.id} href={`/painel/alunos/${a.id}`} className="chip-aluno">
+                                {a.name}
+                                {a.class_name && <small>{a.class_name}</small>}
+                              </Link>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <Avisos r={r} />
+                      </td>
+                      <td>
+                        {r.opt_in ? (
+                          <span className="pill p-mint">
+                            <Ic nome="shield-check" />
+                            Autorizado
+                          </span>
+                        ) : (
+                          <span className="pill p-coral" title="Sem autorização, o sistema não envia avisos">
+                            <Ic nome="shield-x" />
+                            Sem autorização
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {paginas > 1 && (
+              <div className="tfoot">
+                <span className="info">
+                  {pagina} de {paginas} · {lista.total} responsáveis
+                </span>
+                <div className="pages">
+                  <button className="btn ghost" disabled={pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
+                    Anterior
+                  </button>
+                  <button
+                    className="btn ghost"
+                    disabled={pagina >= paginas}
+                    onClick={() => setPagina((p) => p + 1)}
+                  >
+                    Próxima
+                  </button>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
-
-      {lista && paginas > 1 && (
-        <div className="pages">
-          <button className="btn ghost" disabled={pagina <= 1} onClick={() => setPagina((p) => p - 1)}>
-            Anterior
-          </button>
-          <span>
-            {pagina} de {paginas} · {lista.total} responsáveis
-          </span>
-          <button
-            className="btn ghost"
-            disabled={pagina >= paginas}
-            onClick={() => setPagina((p) => p + 1)}
-          >
-            Próxima
-          </button>
-        </div>
-      )}
       {toastEl}
     </section>
   );
@@ -286,6 +366,16 @@ function Avisos({ r }: { r: Responsavel }) {
   );
 }
 
+/** Modelo CSV com cabeçalho e 2 linhas de exemplo (separador `;` do Excel BR). */
+function urlModeloCsv(): string {
+  const conteudo = [
+    'matricula;nome;telefone;parentesco',
+    '1001;Maria da Silva;(81) 99999-0000;mãe',
+    '1002;João Souza;(81) 98888-7777;pai',
+  ].join('\n');
+  return `data:text/csv;charset=utf-8,${encodeURIComponent(conteudo)}`;
+}
+
 /**
  * CSV da secretaria: aceita `;` ou `,` como separador (Excel brasileiro usa
  * ponto e vírgula) e encontra as colunas pelo cabeçalho, em qualquer ordem.
@@ -310,7 +400,9 @@ function lerPlanilha(texto: string): {
   const iTel = col('telefone', 'celular', 'whatsapp', 'fone');
   const iPar = col('parentesco', 'relacao', 'relação', 'vinculo', 'vínculo');
   if (iAluno < 0 || iNome < 0 || iTel < 0) {
-    throw new Error('a planilha precisa das colunas aluno_external_id, nome e telefone');
+    throw new Error(
+      'a planilha precisa das colunas matricula (ou aluno), nome e telefone na primeira linha',
+    );
   }
 
   return linhas.slice(1).map((linha) => {

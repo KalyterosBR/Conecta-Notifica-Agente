@@ -212,6 +212,7 @@ export default function PaginaEscolas() {
             Nenhuma escola encontrada.
           </div>
         ) : (
+          <div className="tw">
           <table className="adm-tabela">
             <thead>
               <tr>
@@ -283,6 +284,7 @@ export default function PaginaEscolas() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
       {toastEl}

@@ -113,13 +113,18 @@ function Conteudo() {
         </div>
       </div>
 
-      <div className="onb-dica" style={{ marginBottom: 16 }}>
-        <Ic nome="info-circle" />
-        <span>
-          <b>Como ler os status:</b> “Enviado” significa que o provedor aceitou o aviso para envio.
-          “Entregue” e “Lido” dependem de confirmação posterior do WhatsApp; por isso, um aviso enviado
-          pode continuar sem confirmação. “Falha” indica que o envio não foi concluído.
+      <div className="resp-orientacao" style={{ marginBottom: 16 }}>
+        <span className="resp-orientacao-icone">
+          <Ic nome="info-circle" />
         </span>
+        <div className="resp-orientacao-texto">
+          <b>Como ler os status</b>
+          <p>
+            “Enviado” significa que o provedor aceitou o aviso. “Entregue” e “Lido” dependem de
+            confirmação do WhatsApp — um aviso enviado pode ficar sem confirmação. “Falha” indica
+            que o envio não foi concluído.
+          </p>
+        </div>
       </div>
 
       {erro && <div className="erro-inline">{erro}</div>}
