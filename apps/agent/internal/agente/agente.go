@@ -29,12 +29,12 @@ type Agente struct {
 	api    *api.Cliente
 	mapa   *direcao.Mapeador
 
-	mu           sync.Mutex
-	bancoOK      bool
-	saasOK       bool
-	ultimoErro   string
-	enviadosHoje int64
-	diaContagem  string
+	mu            sync.Mutex
+	bancoOK       bool
+	saasOK        bool
+	ultimoErro    string
+	enviadosHoje  int64
+	diaContagem   string
 	ultimaLeitura time.Time
 	ultimoEnvio   time.Time
 }
@@ -68,18 +68,7 @@ func (a *Agente) Rodar(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			t := time.NewTicker(intervalo)
-			defer t.Stop()
-			for {
-				if err := fn(ctx); err != nil && !errors.Is(err, context.Canceled) {
-					a.registrarErro(nome, err)
-				}
-				select {
-				case <-ctx.Done():
-					return
-				case <-t.C:
-				}
-			}
+			a.executarLaco(ctx, nome, intervalo, fn, esperarLaco)
 		}()
 	}
 
@@ -98,6 +87,76 @@ func (a *Agente) Rodar(ctx context.Context) error {
 	wg.Wait()
 	a.log.Info("agente encerrado")
 	return nil
+}
+
+// executarLaco tenta novamente após falhas transitórias, sem alterar o cursor
+// nem o estado durável da fila. Uma execução bem-sucedida restaura o intervalo
+// configurado. Erros de autenticação aguardam o intervalo normal até a chave
+// ser corrigida.
+func (a *Agente) executarLaco(ctx context.Context, nome string, intervalo time.Duration, fn func(context.Context) error, esperar func(context.Context, time.Duration) bool) {
+	falhas := 0
+	emFalha := false
+	for ctx.Err() == nil {
+		err := fn(ctx)
+		if ctx.Err() != nil {
+			return
+		}
+		atraso := intervalo
+		if err != nil {
+			a.registrarErro(nome, err)
+			emFalha = true
+			var he *api.ErroHTTP
+			if errors.As(err, &he) && he.Autenticacao() {
+				falhas = 0
+			} else {
+				falhas++
+				atraso = atrasoTentativa(falhas)
+			}
+			a.log.Warn("nova tentativa agendada", "laco", nome, "em", atraso, "tentativa", falhas+1)
+		} else {
+			if emFalha {
+				a.log.Info("laço recuperado", "laco", nome, "falhas", falhas)
+				a.limparErroRecuperado(nome)
+			}
+			falhas = 0
+			emFalha = false
+		}
+		if !esperar(ctx, atraso) {
+			return
+		}
+	}
+}
+
+func atrasoTentativa(falhas int) time.Duration {
+	if falhas <= 1 {
+		return 5 * time.Second
+	}
+	if falhas == 2 {
+		return 10 * time.Second
+	}
+	if falhas == 3 {
+		return 20 * time.Second
+	}
+	return 30 * time.Second
+}
+
+func esperarLaco(ctx context.Context, atraso time.Duration) bool {
+	t := time.NewTimer(atraso)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return ctx.Err() == nil
+	}
+}
+
+func (a *Agente) limparErroRecuperado(nome string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if strings.HasPrefix(a.ultimoErro, nome+": ") {
+		a.ultimoErro = ""
+	}
 }
 
 // posicionarCursor define de onde começar quando não há estado salvo.
@@ -270,6 +329,7 @@ func (a *Agente) Drenar(ctx context.Context) error {
 		}
 		resp, err := a.api.EnviarEventos(ctx, evs)
 		if err != nil {
+			a.definirSaaS(false)
 			var he *api.ErroHTTP
 			if errors.As(err, &he) {
 				if he.Permanente() {
@@ -286,6 +346,7 @@ func (a *Agente) Drenar(ctx context.Context) error {
 		if err := a.fila.Confirmar(bytes, len(evs)); err != nil {
 			return err
 		}
+		a.definirSaaS(true)
 		a.contarEnvio(int64(len(evs)))
 		a.marcarEnvio()
 		a.log.Info("lote enviado",
@@ -293,6 +354,12 @@ func (a *Agente) Drenar(ctx context.Context) error {
 			"pendentes", a.fila.Pendentes())
 	}
 	return nil
+}
+
+func (a *Agente) definirSaaS(ok bool) {
+	a.mu.Lock()
+	a.saasOK = ok
+	a.mu.Unlock()
 }
 
 func (a *Agente) SincronizarAlunos(ctx context.Context) error {
@@ -361,18 +428,18 @@ func (a *Agente) publicarEstado(hb modelo.Heartbeat, ultimoEvento string) {
 		ultimoEnvio = anterior.UltimoEnvio
 	}
 	e := estado.Estado{
-		Escola:       a.cfg.Escola.Nome,
-		BancoOK:      a.bancoOK,
-		SaaSOK:       a.saasOK,
-		Pendentes:    hb.Pendentes,
-		EnviadosHoje: a.enviadosHoje,
-		UltimoEvento: ultimoEvento,
-		UltimoErro:   a.ultimoErro,
-		UltimaLeitura: ultimaLeitura,
-		UltimoEnvio: ultimoEnvio,
-		SincronizacaoHabilitada: a.cfg.Consultas.SincronizarAlunos,
+		Escola:                    a.cfg.Escola.Nome,
+		BancoOK:                   a.bancoOK,
+		SaaSOK:                    a.saasOK,
+		Pendentes:                 hb.Pendentes,
+		EnviadosHoje:              a.enviadosHoje,
+		UltimoEvento:              ultimoEvento,
+		UltimoErro:                a.ultimoErro,
+		UltimaLeitura:             ultimaLeitura,
+		UltimoEnvio:               ultimoEnvio,
+		SincronizacaoHabilitada:   a.cfg.Consultas.SincronizarAlunos,
 		ConsultaAlunosConfigurada: strings.TrimSpace(a.cfg.Consultas.Alunos) != "",
-		IntervaloAlunosMinutos: a.cfg.Consultas.IntervaloAlunosMinuto,
+		IntervaloAlunosMinutos:    a.cfg.Consultas.IntervaloAlunosMinuto,
 	}
 	a.mu.Unlock()
 	if err := estado.Gravar(caminho, e); err != nil {

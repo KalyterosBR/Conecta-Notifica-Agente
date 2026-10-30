@@ -7,6 +7,23 @@ aluno → responsáveis e dispara o WhatsApp.
 Binário único, sem runtime para instalar, sem CGO. Acesso ao banco é
 **somente leitura**: nenhuma consulta do agente escreve na base da catraca.
 
+## Central e ícone no Windows
+
+A Central e o monitor usam um único ícone na bandeja. Abrir o agente inicia o
+monitor caso ele ainda não esteja aberto; clicar no ícone reabre a Central.
+Minimizar ou fechar a janela mantém o monitor disponível. **Sair**, no menu do
+ícone, encerra a Central e o monitor, preservando o serviço Windows.
+
+O logo recebe um ponto verde quando está conectado e vermelho quando o estado
+não está saudável. O monitor consulta o serviço a cada cinco segundos; um
+serviço parado não aparece conectado por causa de um estado antigo em disco.
+
+Os ícones têm imagens próprias para 16, 20, 24, 32, 40, 48, 64, 96, 128 e
+256 pixels. O monitor escolhe o tamanho conforme a escala da barra de tarefas.
+Para regenerar os assets a partir do logo original, execute no Windows
+`powershell -ExecutionPolicy Bypass -File scripts\gerar-icones.ps1`; depois
+regenere os recursos do núcleo e publique novamente a Central.
+
 ## Como funciona
 
 ```
@@ -137,6 +154,27 @@ Status que o agente trata como **definitivos** (descarta o lote e segue, para
 um payload ruim não travar a fila): 400, 404, 409, 413, 422. Qualquer outro
 erro mantém o lote na fila para a próxima tentativa. 401/403 mantém o lote e
 loga a chave rejeitada.
+
+### Reconexão automática
+
+Quedas temporárias do SQL Server ou do painel geram novas tentativas após
+5, 10, 20 e 30 segundos; se a falha continuar, o agente tenta a cada 30 segundos
+até recuperar. Depois do sucesso, cada ciclo volta ao intervalo configurado.
+O mesmo vale para a sincronização periódica de alunos quando habilitada.
+As consultas SQL respeitam `banco.timeout_segundos` (padrão: 15 segundos),
+evitando que uma leitura travada bloqueie as próximas tentativas.
+
+A inicialização SQL tenta novamente a cada 30 segundos. Se o trabalho interno
+for interrompido inesperadamente, o serviço tenta iniciá-lo novamente com a
+espera progressiva. O instalador também configura o Windows para reiniciar o
+serviço 30 segundos após falha do processo. **Parar agente** continua sendo uma
+parada intencional, sem reinício automático.
+
+As tentativas preservam a fila e o cursor. Erros de autenticação 401/403 mantêm
+os eventos e aguardam o intervalo normal: exigem corrigir a chave, não apenas
+esperar a reconexão. A sincronização manual é uma operação única; essas
+tentativas contínuas atendem ao serviço e à sincronização periódica habilitada.
+Os logs registram a próxima tentativa e a recuperação.
 
 ### `POST /v1/agent/students/sync`
 

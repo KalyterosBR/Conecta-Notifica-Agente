@@ -71,6 +71,9 @@ Name: "monitor"; Description: "Mostrar o ícone de status ao lado do relógio"; 
 ; token original não elevado e o Windows retorna CreateProcess 740.
 Filename: "{app}\{#GuiExe}"; Description: "Abrir o assistente de configuração"; Flags: nowait postinstall skipifsilent runascurrentuser; Check: PrimeiraInstalacao
 Filename: "{app}\{#CoreExe}"; Parameters: "iniciar -config ""{app}\config.yaml"""; Flags: runhidden; Check: ConfiguracaoComServico
+; Atualizações também configuram recuperação de encerramento inesperado.
+; Parar normalmente pelo usuário não aciona essa recuperação do Windows.
+Filename: "{sys}\sc.exe"; Parameters: "failure ConectaNotificaAgent reset= 86400 actions= restart/30000/restart/30000/restart/30000"; Flags: runhidden; Check: ConfiguracaoComServico
 
 [UninstallRun]
 Filename: "{app}\{#CoreExe}"; Parameters: "parar -config ""{app}\config.yaml"""; Flags: runhidden; RunOnceId: "pararservico"

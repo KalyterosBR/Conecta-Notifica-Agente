@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/conecta/notifica-agent/internal/config"
 	"github.com/conecta/notifica-agent/internal/modelo"
@@ -43,6 +44,8 @@ type Repo struct {
 }
 
 func Abrir(ctx context.Context, cfg *config.Config) (*Repo, error) {
+	ctx, cancel := contextoConsulta(ctx, cfg)
+	defer cancel()
 	db, err := sql.Open("sqlserver", cfg.Banco.String())
 	if err != nil {
 		return nil, fmt.Errorf("abrindo conexão: %w", err)
@@ -58,34 +61,64 @@ func Abrir(ctx context.Context, cfg *config.Config) (*Repo, error) {
 
 func (r *Repo) Fechar() error { return r.db.Close() }
 
-func (r *Repo) Ping(ctx context.Context) error { return r.db.PingContext(ctx) }
+func (r *Repo) Ping(ctx context.Context) error {
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
+	return r.db.PingContext(ctx)
+}
+
+// Limita cada leitura para permitir novas tentativas após uma conexão travada.
+func contextoConsulta(ctx context.Context, cfg *config.Config) (context.Context, context.CancelFunc) {
+	segundos := cfg.Banco.TimeoutSegundos
+	if segundos <= 0 {
+		segundos = 15
+	}
+	return context.WithTimeout(ctx, time.Duration(segundos)*time.Second)
+}
 
 // ModoCursor resolve "auto" olhando se dbo.Marcacao.Codigo é IDENTITY. Sendo
 // identity, ele cresce na ordem de inserção e pega até marcação antiga que o
 // equipamento descarregou depois — é o cursor preferido. Caso contrário
 // caímos em DataHora, que exige varredura periódica da janela recente.
 func (r *Repo) ModoCursor(ctx context.Context) string {
+	modo, _ := r.ResolverModoCursor(ctx)
+	return modo
+}
+
+// ResolverModoCursor não transforma indisponibilidade do SQL em troca de cursor.
+// A inicialização deve resolver o modo com sucesso antes de iniciar os laços.
+func (r *Repo) ResolverModoCursor(ctx context.Context) (string, error) {
 	if r.modoCursor != "" {
-		return r.modoCursor
+		return r.modoCursor, nil
 	}
-	r.modoCursor = r.cfg.Coleta.Cursor
-	if r.modoCursor != "auto" {
-		return r.modoCursor
+	if r.cfg.Coleta.Cursor != "auto" {
+		r.modoCursor = r.cfg.Coleta.Cursor
+		return r.modoCursor, nil
 	}
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
 	var ident sql.NullInt64
 	err := r.db.QueryRowContext(ctx,
 		`SELECT COLUMNPROPERTY(OBJECT_ID('dbo.Marcacao'), 'Codigo', 'IsIdentity')`).Scan(&ident)
-	if err == nil && ident.Valid && ident.Int64 == 1 {
+	if err != nil {
+		return "", fmt.Errorf("identificando cursor de marcações: %w", err)
+	}
+	if !ident.Valid {
+		return "", fmt.Errorf("não foi possível identificar dbo.Marcacao.Codigo")
+	}
+	if ident.Int64 == 1 {
 		r.modoCursor = "codigo"
 	} else {
 		r.modoCursor = "datahora"
 	}
-	return r.modoCursor
+	return r.modoCursor, nil
 }
 
 // MaiorCodigo devolve o maior Codigo já gravado, usado para posicionar o
 // cursor em "inicio_em: agora".
 func (r *Repo) MaiorCodigo(ctx context.Context) (string, error) {
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
 	var v sql.NullInt64
 	err := r.db.QueryRowContext(ctx, `SELECT MAX(Codigo) FROM dbo.Marcacao WITH (NOLOCK)`).Scan(&v)
 	if err != nil {
@@ -99,13 +132,18 @@ func (r *Repo) MaiorCodigo(ctx context.Context) (string, error) {
 
 // BuscarMarcacoes lê uma página de marcações a partir do cursor.
 func (r *Repo) BuscarMarcacoes(ctx context.Context, cursor string, limite int) ([]modelo.Marcacao, error) {
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
 	consulta := strings.TrimSpace(r.cfg.Consultas.Eventos)
 	if consulta != "" {
 		if err := validarConsultaSomenteLeitura(consulta); err != nil {
 			return nil, fmt.Errorf("consulta de eventos: %w", err)
 		}
 	}
-	modo := r.ModoCursor(ctx)
+	modo, err := r.ResolverModoCursor(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if consulta == "" {
 		if modo == "codigo" {
 			consulta = consultaEventosPorCodigo
@@ -179,6 +217,8 @@ func (r *Repo) BuscarMarcacoes(ctx context.Context, cursor string, limite int) (
 // configurada devolve nil — o nome da tabela de pessoas muda conforme a
 // instalação, então nunca chutamos um SELECT aqui.
 func (r *Repo) BuscarAlunos(ctx context.Context) ([]modelo.Aluno, error) {
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
 	consulta := strings.TrimSpace(r.cfg.Consultas.Alunos)
 	if consulta == "" {
 		return nil, nil
@@ -286,7 +326,7 @@ WHERE s.name=@schema AND t.name=@tabela`, sql.Named("schema", schema), sql.Named
 	if codigo == "" || nome == "" {
 		return "", "", fmt.Errorf("a tabela %s.%s não tem colunas reconhecidas para identificador e nome; revise o esquema manualmente", schema, tabela)
 	}
-	ident := func(v string) string { return "[" + strings.ReplaceAll(v, "]", "]]" ) + "]" }
+	ident := func(v string) string { return "[" + strings.ReplaceAll(v, "]", "]]") + "]" }
 	// Evita interpretar Status/validade de forma ambígua. Uma coluna Ativo
 	// explícita pode ser mapeada; demais casos mantêm active=1 para revisão.
 	campos := []string{"p." + ident(codigo) + " AS external_id", "p." + ident(nome) + " AS nome"}
@@ -354,6 +394,8 @@ func ValidarConsultaSomenteLeitura(consulta string) error {
 // DataHora >= datahora, para posicionar o cursor por data quando o modo é
 // codigo.
 func (r *Repo) CodigoDesde(ctx context.Context, datahora string) (string, error) {
+	ctx, cancel := contextoConsulta(ctx, r.cfg)
+	defer cancel()
 	var v sql.NullInt64
 	err := r.db.QueryRowContext(ctx,
 		`SELECT MIN(Codigo) FROM dbo.Marcacao WITH (NOLOCK) WHERE DataHora >= @p1`,

@@ -3,6 +3,7 @@ package agente
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -108,6 +109,94 @@ func TestDrenarMantemNaFilaQuandoSaaSCai(t *testing.T) {
 	}
 	if f.Pendentes() != 1 {
 		t.Fatalf("evento sumiu da fila: pendentes = %d", f.Pendentes())
+	}
+	if a.saasOK {
+		t.Fatal("SaaS deve ficar indisponível após falha de envio")
+	}
+}
+
+func TestLacoRecuperaIntervaloECancela(t *testing.T) {
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	a := &Agente{log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	var atrasos []time.Duration
+	chamadas := 0
+	a.executarLaco(ctx, "coleta", time.Minute, func(context.Context) error {
+		chamadas++
+		if chamadas <= 5 {
+			return errors.New("falha temporária")
+		}
+		return nil
+	}, func(_ context.Context, d time.Duration) bool {
+		atrasos = append(atrasos, d)
+		if len(atrasos) == 6 {
+			cancelar()
+			return false
+		}
+		return true
+	})
+	quer := []time.Duration{5 * time.Second, 10 * time.Second, 20 * time.Second, 30 * time.Second, 30 * time.Second, time.Minute}
+	if len(atrasos) != len(quer) {
+		t.Fatalf("atrasos = %v", atrasos)
+	}
+	for i := range quer {
+		if atrasos[i] != quer[i] {
+			t.Fatalf("atraso %d = %v; esperado %v", i, atrasos[i], quer[i])
+		}
+	}
+	if a.ultimoErro != "" {
+		t.Fatalf("erro recuperado permaneceu: %q", a.ultimoErro)
+	}
+}
+
+func TestEsperaInterrompidaPorCancelamento(t *testing.T) {
+	ctx, cancelar := context.WithCancel(context.Background())
+	cancelar()
+	if esperarLaco(ctx, time.Hour) {
+		t.Fatal("espera não foi interrompida")
+	}
+}
+
+func TestLacoReenviaFilaAposPainelRecuperar(t *testing.T) {
+	chamadas := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chamadas++
+		if chamadas == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		json.NewEncoder(w).Encode(modelo.RespostaLote{Aceitos: 1})
+	}))
+	defer srv.Close()
+	a, f := montar(t, srv)
+	if err := f.Enfileirar([]modelo.Evento{evento("recuperacao")}, "19"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancelar := context.WithCancel(context.Background())
+	defer cancelar()
+	esperas := 0
+	a.executarLaco(ctx, "envio", time.Minute, a.Drenar, func(_ context.Context, d time.Duration) bool {
+		esperas++
+		if esperas == 1 {
+			if f.Pendentes() != 1 || f.Cursor() != "19" {
+				t.Fatal("queda alterou fila ou cursor")
+			}
+			if d != 5*time.Second {
+				t.Fatalf("primeira tentativa: %v", d)
+			}
+			return true
+		}
+		if f.Pendentes() != 0 || !a.saasOK {
+			t.Fatal("não recuperou envio ao painel")
+		}
+		if d != time.Minute {
+			t.Fatalf("intervalo após recuperação: %v", d)
+		}
+		cancelar()
+		return false
+	})
+	if chamadas != 2 {
+		t.Fatalf("chamadas: %d", chamadas)
 	}
 }
 

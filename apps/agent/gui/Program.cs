@@ -12,6 +12,13 @@ internal static class Program
     [STAThread]
     static void Main()
     {
+        using var instancia = new Mutex(true, "Local\\ConectaNotificaCentral", out var primeiraInstancia);
+        if (!primeiraInstancia)
+        {
+            var janela = FindWindow(null, "Agente Conecta Notifica");
+            if (janela != IntPtr.Zero) PostMessage(janela, MensagemAbrir, IntPtr.Zero, IntPtr.Zero);
+            return;
+        }
         ApplicationConfiguration.Initialize();
         var baseDir = AppContext.BaseDirectory;
         var config = Path.Combine(baseDir, "config.yaml");
@@ -23,17 +30,82 @@ internal static class Program
         }
         Application.Run(new CentralForm());
     }
+
+    internal static readonly uint MensagemAbrir = RegisterWindowMessage("ConectaNotifica.AbrirCentral");
+    internal static readonly uint MensagemSair = RegisterWindowMessage("ConectaNotifica.SairCentral");
+    internal static Icon? IconeAplicacao()
+    {
+        using var fluxo = typeof(Program).Assembly.GetManifestResourceStream("ConectaNotificaAgente.assets.conecta.ico");
+        return fluxo == null ? null : new Icon(fluxo);
+    }
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern uint RegisterWindowMessage(string nome);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? classe, string titulo);
+    [DllImport("user32.dll")]
+    private static extern bool PostMessage(IntPtr janela, uint mensagem, IntPtr wParam, IntPtr lParam);
 }
 
 internal sealed class CentralForm : Form
 {
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindow(string? classe, string? titulo);
+
+    private DateTime ultimaAberturaMonitor = DateTime.MinValue;
+
+    private void GarantirMonitor()
+    {
+        if (encerrar || FindWindow("ConectaNotificaBandeja", null) != IntPtr.Zero) return;
+        if (DateTime.UtcNow - ultimaAberturaMonitor < TimeSpan.FromSeconds(10)) return;
+        ultimaAberturaMonitor = DateTime.UtcNow;
+        try
+        {
+            var inicio = new ProcessStartInfo(Path.Combine(baseDir, "notifica-core.exe"))
+            {
+                UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = baseDir
+            };
+            inicio.ArgumentList.Add("bandeja");
+            inicio.ArgumentList.Add("-config");
+            inicio.ArgumentList.Add(Path.Combine(baseDir, "config.yaml"));
+            using var processo = Process.Start(inicio);
+        }
+        catch (Exception ex)
+        {
+            Mostrar("Não foi possível abrir o monitor. " + ex.Message);
+        }
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool ChangeWindowMessageFilterEx(IntPtr janela, uint mensagem, uint acao, IntPtr filtro);
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        // Permite somente o pedido de abertura vindo do monitor não elevado.
+        ChangeWindowMessageFilterEx(Handle, Program.MensagemAbrir, 1, IntPtr.Zero);
+        ChangeWindowMessageFilterEx(Handle, Program.MensagemSair, 1, IntPtr.Zero);
+    }
+
+    protected override void WndProc(ref Message m)
+    {
+        if ((uint)m.Msg == Program.MensagemAbrir && Program.MensagemAbrir != 0)
+        {
+            MostrarJanela();
+            return;
+        }
+        if ((uint)m.Msg == Program.MensagemSair && Program.MensagemSair != 0)
+        {
+            Sair();
+            return;
+        }
+        base.WndProc(ref m);
+    }
     private readonly List<Button> botoes = [];
     private readonly Dictionary<string, Label> indicadores = new(StringComparer.OrdinalIgnoreCase);
     private readonly Label resumoStatus = new() { AutoSize = false, Height = 48, Font = new Font("Segoe UI Semibold", 15), Padding = new Padding(10, 8, 10, 8), TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
     private readonly Label detalhesStatus = new() { AutoSize = false, Height = 92, Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(82, 101, 122), Padding = new Padding(10, 0, 10, 8), Dock = DockStyle.Fill, AutoEllipsis = true };
     private readonly ListBox historico = new() { Dock = DockStyle.Fill, IntegralHeight = false, Font = new Font("Segoe UI", 9), BorderStyle = BorderStyle.FixedSingle };
     private readonly string baseDir = AppContext.BaseDirectory;
-    private readonly NotifyIcon bandeja;
     private readonly System.Windows.Forms.Timer atualizadorStatus = new() { Interval = 15000 };
     private readonly string caminhoHistorico;
     private Button botaoIniciar = null!;
@@ -43,7 +115,6 @@ internal sealed class CentralForm : Form
     private string ultimoEventoRegistrado = "";
     private string ultimoEnvioRegistrado = "";
     private string ultimaSyncRegistrada = "";
-    private string ultimoAlerta = "";
     private bool primeiroStatus = true;
     private bool operacaoEmAndamento;
     private bool servicoRodando;
@@ -54,6 +125,7 @@ internal sealed class CentralForm : Form
     public CentralForm()
     {
         Text = "Agente Conecta Notifica";
+        Icon = Program.IconeAplicacao();
         MinimumSize = new Size(920, 700);
         Size = new Size(1040, 820);
         StartPosition = FormStartPosition.CenterScreen;
@@ -61,25 +133,12 @@ internal sealed class CentralForm : Form
         BackColor = Color.FromArgb(245, 248, 252);
         caminhoHistorico = Path.Combine(baseDir, "logs", "central-historico.log");
 
-        var menuBandeja = new ContextMenuStrip();
-        menuBandeja.Items.Add("Abrir Central", null, (_, _) => MostrarJanela());
-        menuBandeja.Items.Add("Atualizar status", null, async (_, _) => await AtualizarStatus());
-        menuBandeja.Items.Add("Diagnóstico guiado", null, async (_, _) => await DiagnosticoGuiado());
-        menuBandeja.Items.Add(new ToolStripSeparator());
-        menuBandeja.Items.Add("Sair", null, (_, _) => Sair());
-        bandeja = new NotifyIcon
-        {
-            Icon = IconeMarca(Color.Gray),
-            Text = "Agente Conecta Notifica",
-            ContextMenuStrip = menuBandeja,
-            Visible = true
-        };
-        bandeja.MouseDoubleClick += (_, _) => MostrarJanela();
         Resize += (_, _) => { if (WindowState == FormWindowState.Minimized) OcultarNaBandeja(); };
         FormClosing += AoFechar;
-        Shown += async (_, _) => await AtualizarStatus();
+        Shown += async (_, _) => { GarantirMonitor(); await AtualizarStatus(); };
         atualizadorStatus.Tick += async (_, _) =>
         {
+            GarantirMonitor();
             if (operacaoEmAndamento) return;
             await AtualizarStatus();
         };
@@ -184,26 +243,6 @@ internal sealed class CentralForm : Form
         using var imagem = Image.FromStream(fluxo);
         return new Bitmap(imagem);
     }
-    [DllImport("user32.dll", SetLastError = true)] private static extern bool DestroyIcon(IntPtr hIcon);
-    private static Icon IconeMarca(Color indicador)
-    {
-        using var marca = ImagemRecurso("ConectaNotificaAgente.assets.logo-conecta-simbolo.png");
-        if (marca == null) return SystemIcons.Application;
-        using var bitmap = new Bitmap(32, 32);
-        using (var grafico = Graphics.FromImage(bitmap))
-        using (var pincel = new SolidBrush(indicador))
-        using (var contorno = new Pen(Color.White, 2))
-        {
-            grafico.Clear(Color.Transparent);
-            grafico.DrawImage(marca, new Rectangle(0, 0, 25, 25));
-            grafico.FillEllipse(pincel, 18, 18, 13, 13);
-            grafico.DrawEllipse(contorno, 18, 18, 13, 13);
-        }
-        var alca = bitmap.GetHicon();
-        try { using var icone = Icon.FromHandle(alca); return (Icon)icone.Clone(); }
-        finally { DestroyIcon(alca); }
-    }
-
     private Button Botao(string texto, Func<Task> acao, bool principal = false)
     {
         var b = new Button { Text = texto, Dock = DockStyle.Fill, Height = 42, MinimumSize = new Size(0, 42), Margin = new Padding(6, 4, 6, 4), BackColor = principal ? Color.FromArgb(11, 103, 194) : Color.FromArgb(83, 101, 121), ForeColor = Color.White, FlatStyle = FlatStyle.Flat, UseVisualStyleBackColor = false };
@@ -352,17 +391,7 @@ internal sealed class CentralForm : Form
                 ultimaSyncRegistrada = concluida;
             }
         }
-        if (!primeiroStatus && titulo != ultimoAlerta && (cor == Color.Firebrick || cor == Color.DarkOrange))
-        {
-            bandeja.ShowBalloonTip(4500, "Agente Conecta Notifica", titulo, ToolTipIcon.Warning);
-            ultimoAlerta = titulo;
-        }
-        else if (cor == Color.SeaGreen) ultimoAlerta = "";
         primeiroStatus = false;
-        var iconeAnterior = bandeja.Icon;
-        bandeja.Icon = IconeMarca(cor);
-        if (iconeAnterior != null && iconeAnterior != SystemIcons.Application) iconeAnterior.Dispose();
-        bandeja.Text = (cor == Color.SeaGreen ? "Conectado" : cor == Color.Firebrick ? "Serviço parado" : "Atenção") + " — Agente Conecta Notifica";
     }
 
     private static string Texto(JsonElement e, string nome, string padrao) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(nome, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? padrao : padrao;
@@ -586,19 +615,19 @@ internal sealed class CentralForm : Form
     private void OcultarNaBandeja()
     {
         Hide();
-        bandeja.ShowBalloonTip(1500, "Agente Conecta Notifica", "A Central continua disponível ao lado do relógio.", ToolTipIcon.Info);
+        GarantirMonitor();
     }
     private void MostrarJanela()
     {
-        Show(); WindowState = FormWindowState.Normal; Activate();
+        GarantirMonitor(); Show(); WindowState = FormWindowState.Normal; Activate();
     }
     private void Sair()
     {
-        encerrar = true; bandeja.Visible = false; Close();
+        encerrar = true; atualizadorStatus.Stop(); Close();
     }
     private void AoFechar(object? sender, FormClosingEventArgs e)
     {
-        if (encerrar) { bandeja.Visible = false; return; }
+        if (encerrar) return;
         e.Cancel = true; OcultarNaBandeja();
     }
     private Task Abrir(string caminho)
@@ -633,6 +662,7 @@ internal sealed class ConfigForm : Form
 
     public ConfigForm(string baseDir, bool primeiraConfiguracao = false)
     {
+        Icon = Program.IconeAplicacao();
         dir = baseDir; this.primeiraConfiguracao = primeiraConfiguracao;
         Text = primeiraConfiguracao ? "Agente Conecta Notifica — Primeira configuração" : "Configurar Agente Conecta Notifica";
         Size = new Size(650, primeiraConfiguracao ? 660 : 610); StartPosition = FormStartPosition.CenterParent;

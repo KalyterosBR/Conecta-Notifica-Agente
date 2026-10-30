@@ -148,6 +148,11 @@ func executar(comando, caminhoConfig string) error {
 		DisplayName: "Agente Conecta Notifica",
 		Description: "Lê as marcações de acesso no SQL Server e envia para o Conecta Notifica.",
 		Arguments:   []string{"run", "-config", abs},
+		Option: service.KeyValue{
+			"OnFailure":              "restart",
+			"OnFailureDelayDuration": "30s",
+			"OnFailureResetPeriod":   86400,
+		},
 	}
 
 	switch comando {
@@ -249,14 +254,20 @@ func prepararConsultaAlunos(caminho string, cfg *config.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	repo, err := banco.Abrir(ctx, cfg)
-	if err != nil { return fmt.Errorf("não consegui conectar para descobrir o cadastro; confira usuário e permissão SELECT: %w", err) }
+	if err != nil {
+		return fmt.Errorf("não consegui conectar para descobrir o cadastro; confira usuário e permissão SELECT: %w", err)
+	}
 	defer repo.Fechar()
 	consulta, aviso, err := repo.ConsultaAlunosSugerida(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	if err := repo.ValidarConsultaAlunosCompilacao(ctx, consulta); err != nil {
 		return fmt.Errorf("encontrei um candidato, mas a conta não conseguiu validá-lo; confira SELECT na tabela referenciada: %w", err)
 	}
-	if err := config.SalvarConsultaAlunos(caminho, consulta); err != nil { return err }
+	if err := config.SalvarConsultaAlunos(caminho, consulta); err != nil {
+		return err
+	}
 	fmt.Println("Consulta de alunos configurada e validada sem ler registros.")
 	fmt.Println(aviso)
 	fmt.Println("A sincronização automática permanece desligada; revise os critérios de validade e habilite-a somente depois.")
@@ -466,9 +477,9 @@ func (p *programa) Start(service.Service) error {
 	p.pronto = make(chan struct{})
 	go func() {
 		defer close(p.pronto)
-		if err := rodar(ctx, p.cfg, p.log); err != nil && ctx.Err() == nil {
-			p.log.Error("agente parou", "erro", err)
-		}
+		supervisionar(ctx, p.log, func(ctx context.Context) error {
+			return rodar(ctx, p.cfg, p.log)
+		}, esperarRecuperacao)
 	}()
 	return nil
 }
@@ -518,6 +529,9 @@ func rodar(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		}
 	}
 	defer repo.Fechar()
+	if _, err := repo.ResolverModoCursor(ctx); err != nil {
+		return err
+	}
 
 	a := agente.Novo(cfg, log, repo, f, v, api.Novo(cfg, Versao))
 	return a.Rodar(ctx)

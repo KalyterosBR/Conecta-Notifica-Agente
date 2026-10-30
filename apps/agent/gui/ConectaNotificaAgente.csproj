@@ -13,6 +13,7 @@
     <ApplicationIcon>assets\conecta.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
+    <EmbeddedResource Include="assets\conecta.ico" />
     <EmbeddedResource Include="assets\logo-conecta-horizontal.png" />
     <EmbeddedResource Include="assets\logo-conecta-simbolo.png" />
   </ItemGroup>
