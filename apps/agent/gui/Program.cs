@@ -104,6 +104,7 @@ internal sealed class CentralForm : Form
     private readonly Dictionary<string, Label> indicadores = new(StringComparer.OrdinalIgnoreCase);
     private readonly Label resumoStatus = new() { AutoSize = false, Height = 48, Font = new Font("Segoe UI Semibold", 15), Padding = new Padding(10, 8, 10, 8), TextAlign = ContentAlignment.MiddleLeft, Dock = DockStyle.Fill };
     private readonly Label detalhesStatus = new() { AutoSize = false, Height = 92, Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(82, 101, 122), Padding = new Padding(10, 0, 10, 8), Dock = DockStyle.Fill, AutoEllipsis = true };
+    private readonly Label labelVersao = new() { AutoSize = true, Font = new Font("Segoe UI", 9), ForeColor = Color.FromArgb(120, 138, 158), Margin = new Padding(8, 10, 0, 0), TextAlign = ContentAlignment.BottomLeft };
     private readonly ListBox historico = new() { Dock = DockStyle.Fill, IntegralHeight = false, Font = new Font("Segoe UI", 9), BorderStyle = BorderStyle.FixedSingle };
     private readonly string baseDir = AppContext.BaseDirectory;
     private readonly System.Windows.Forms.Timer atualizadorStatus = new() { Interval = 15000 };
@@ -159,7 +160,10 @@ internal sealed class CentralForm : Form
         topo.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 250)); topo.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         topo.Controls.Add(new PictureBox { Image = LogoHorizontal(), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(235, 76), Margin = new Padding(0, 0, 18, 0) }, 0, 0);
         var textosTopo = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) };
-        textosTopo.Controls.Add(new Label { Text = "Agente Conecta Notifica", Font = new Font("Segoe UI Semibold", 18), AutoSize = true });
+        var linhaTitulo = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Margin = new Padding(0) };
+        linhaTitulo.Controls.Add(new Label { Text = "Agente Conecta Notifica", Font = new Font("Segoe UI Semibold", 18), AutoSize = true, Margin = new Padding(0) });
+        linhaTitulo.Controls.Add(labelVersao);
+        textosTopo.Controls.Add(linhaTitulo);
         textosTopo.Controls.Add(new Label { Text = "Integração da catraca com o painel da escola", ForeColor = Color.FromArgb(82, 101, 122), AutoSize = true, Margin = new Padding(3, 2, 3, 0) });
         topo.Controls.Add(textosTopo, 1, 0);
         principal.Controls.Add(topo, 0, 0); principal.SetRowSpan(topo, 2);
@@ -190,6 +194,7 @@ internal sealed class CentralForm : Form
         principal.Controls.Add(new Label { Text = "O serviço continua rodando quando a central é minimizada ou fechada. O ícone ao lado do relógio mostra o estado.", ForeColor = Color.FromArgb(82, 101, 122), AutoSize = true, Margin = new Padding(3, 12, 3, 0) }, 0, 8);
         Controls.Add(principal);
         CarregarHistorico();
+        AtualizarVersaoVisivel(VersaoDaCentral());
         resumoStatus.Text = "CONSULTANDO STATUS";
         detalhesStatus.Text = "Verificando serviço, banco, painel e fila…";
     }
@@ -307,7 +312,7 @@ internal sealed class CentralForm : Form
     private void AplicarStatus(JsonElement raiz, string complemento)
     {
         var servico = Texto(raiz, "servico", "unknown");
-        versaoAtual = Texto(raiz, "versao", "dev");
+        AtualizarVersaoVisivel(Texto(raiz, "versao", VersaoDaCentral()));
         var estadoExiste = raiz.TryGetProperty("estado", out var estado);
         var atualizado = estadoExiste ? Data(estado, "em") : null;
         var fresco = atualizado.HasValue && DateTimeOffset.Now - atualizado.Value.ToLocalTime() < TimeSpan.FromMinutes(3);
@@ -350,7 +355,7 @@ internal sealed class CentralForm : Form
         else { titulo = "CONECTADO — AGENTE OPERANDO NORMALMENTE"; cor = Color.SeaGreen; }
         PintarStatus(titulo, cor);
 
-        var detalhes = "Versão " + versaoAtual + " | Enviados hoje: " + enviadasHoje +
+        var detalhes = "Enviados hoje: " + enviadasHoje +
                        " | Última leitura SQL: " + (ultimaLeitura?.ToLocalTime().ToString("dd/MM HH:mm:ss") ?? "sem registro") +
                        " | Último envio: " + (ultimoEnvio?.ToLocalTime().ToString("dd/MM HH:mm:ss") ?? "sem registro");
         if (configuradaAlunos && raiz.TryGetProperty("sincronizacao", out var sync))
@@ -402,6 +407,27 @@ internal sealed class CentralForm : Form
     {
         if (DateTimeOffset.TryParse(valor, out var dt)) return dt.ToLocalTime().ToString("dd/MM HH:mm:ss");
         return "Sem evento registrado";
+    }
+
+    private void AtualizarVersaoVisivel(string versao)
+    {
+        versaoAtual = VersaoAmigavel(string.IsNullOrWhiteSpace(versao) ? "dev" : versao.Trim());
+        labelVersao.Text = versaoAtual;
+    }
+
+    private static string VersaoDaCentral()
+    {
+        try { return VersaoAmigavel(Application.ProductVersion); }
+        catch { return "dev"; }
+    }
+
+    private static string VersaoAmigavel(string versao)
+    {
+        var limpa = versao.Trim();
+        var mais = limpa.IndexOf('+');
+        if (mais > 0) limpa = limpa[..mais];
+        var traco = limpa.IndexOf('-');
+        return traco > 0 ? limpa[..traco] : limpa;
     }
 
     private void PintarStatus(string titulo, Color cor)

@@ -1,5 +1,22 @@
 # AGENTS.md — Conecta Notifica
 
+## Estado — 11/11/2026
+
+### Agente / instalador
+
+- Versão oficial do repositório permanece `1.0.5` em `apps/agent/VERSION`.
+- Central C# exibe a versão de forma discreta ao lado do título ("Agente Conecta Notifica"), em cinza, só a base SemVer (`1.0.5`), sem sufixo `-dev.*`. O título da janela continua exatamente `Agente Conecta Notifica` para não quebrar `FindWindow` do monitor/instância única.
+- Instalador de teste na Área de Trabalho: `C:\Users\Conecta\Desktop\ConectaNotifica-Agente-1.0.5-dev.version-ui.exe` (SHA256 `ec2177a7b5fe3b0df9583e8ae24d283d7ec91617578bd096f21ae7aca72e3dc0`). Canal de teste, não release oficial. Staging em `C:\Users\Conecta\Desktop\notifica-build-current\apps\agent` com `config.yaml` preservado.
+
+### TopPortaria / Fit 4 + facial
+
+- Ambiente do cliente (não confundir com o PC `DESKTOP-8UC3DN3` do lab): instância SQL `.\TOPPORTARIA`, serviço em `desktop-vfha1b5\topportaria`.
+- Causa do monitoramento vazio: `ConfigBanco.xml` com `IniciarMonitoramento=false` e falhas de conexão SQL do serviço (Named Pipes / instância). Após corrigir conexão e ligar o monitoramento, catracas passaram a operar na UI.
+- Duas catracas + dois faciais vinculados pela interface da catraca (NS manual quando a lista `...` veio vazia): Inner 1 ↔ `AYUF25078693`, Inner 2 ↔ `AYUF25078788`. Porta servidor facial compartilhada `7792`; IPs dos faciais distintos. Última checagem: `TopFaceService` Running com `ESTABLISHED` em `.225` e `.237`.
+- Logs TopFace em `Downloads\Logs` mostraram falhas SQL intermitentes, SQL em single-user em um momento, e foto rejeitada para identificador facial 2 (“não atende especificação”).
+- `dbo.Marcacao` ainda chegou a ficar sem linhas em testes anteriores de passagem; validar de novo gravação de evento após giro completo com monitoramento ativo.
+- O agente Conecta Notifica **não** envia faces ao leitor nem lê coluna de foto; sincroniza cadastro básico (id/nome/cartão/ativo). Faces continuam responsabilidade TopPortaria/TopFace.
+
 ## Ajuste aplicado — 02/10/2026
 
 - A Central C# oculta seu próprio ícone enquanto encontra a janela `ConectaNotificaBandeja`; sem monitor, mantém um ícone próprio para reabertura. A publicação Windows foi aplicada em `C:\ConectaNotifica\ConectaNotificaAgente.exe`, com backup `.before-single-tray`.
