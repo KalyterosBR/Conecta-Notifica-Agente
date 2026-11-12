@@ -1,5 +1,15 @@
 # AGENTS.md — Conecta Notifica
 
+## Estado — 12/11/2026
+
+- Este repositório ficou só com o agente. O `main` público é https://github.com/KalyterosBR/Conecta-Notifica-Agente. A limpeza está no commit `7e1431b`; foto e turma estão no `266bb1b`. O histórico antigo não foi reescrito: a árvore atual não tem `apps/api`, `apps/web`, `deploy` nem `files`.
+- O repositório estava privado e o GitHub respondia 404 para quem abria o link sem a conta com acesso. Em 12/11 a visibilidade passou a pública. Colaborador `DaniloGalmac` continua com escrita. Não há senha, `config.yaml` nem chave `cn_` versionados.
+- A foto do cadastro já é um JPEG inteiro em `dbo.Pessoas.foto` (amostras dos códigos 1–3, assinatura `FFD8FFE0`, cerca de 34–49 KB). O comando manual `sincronizar-fotos` lê esses bytes e envia um por vez. O serviço Windows não envia foto sozinho. Contrato para o outro dev: `apps/agent/docs/CONTRATO-FOTO-ALUNO.md`.
+- Não existe coluna Turma em `dbo.Pessoas`. A sincronização de alunos que já existe completa a turma vazia com o nome do perfil de acesso (`CodigoPerfilAcesso`), sem botão novo. O número do perfil não vai para o site. Contrato: `apps/agent/docs/CONTRATO-TURMA.md`. O painel e a API deste repositório não foram alterados; o outro dev implementa os dois contratos no site.
+- A tabela do perfil não foi confirmada ao vivo. Se `notifica_ro` não tiver `SELECT` nela, nome e cartão seguem e a turma fica vazia. Não clicar em **Detectar consulta de alunos** depois de ajustar a consulta à mão: esse botão regrava `consultas.alunos`.
+- Instalador de teste, não instalado e não aplicado em `C:\ConectaNotifica`: `C:\Users\Conecta\Desktop\ConectaNotifica-Agente-1.0.5-dev.turma-foto.exe` (43.211.760 bytes, SHA256 `25FBBB43FB117018B6BAE971CAA550324F874699B27CB38FABFECFB02222E4E1`). Cópia em `C:\Users\Conecta\Desktop\notifica-build-current\apps\agent\dist`. A Central dentro do pacote é a já instalada; a interface C# não mudou. `apps/agent/VERSION` permanece `1.0.5`. O `config.yaml` do staging foi preservado.
+- Testes Go de JPEG e perfil não rodaram neste Linux porque o `go` não está no WSL. O núcleo Windows compilou. Próximo passo, só se for pedido: conceder o `SELECT` do perfil e instalar o pacote novo por cima da escola.
+
 ## Estado — 11/11/2026
 
 ### Agente / instalador
@@ -15,7 +25,7 @@
 - Duas catracas + dois faciais vinculados pela interface da catraca (NS manual quando a lista `...` veio vazia): Inner 1 ↔ `AYUF25078693`, Inner 2 ↔ `AYUF25078788`. Porta servidor facial compartilhada `7792`; IPs dos faciais distintos. Última checagem: `TopFaceService` Running com `ESTABLISHED` em `.225` e `.237`.
 - Logs TopFace em `Downloads\Logs` mostraram falhas SQL intermitentes, SQL em single-user em um momento, e foto rejeitada para identificador facial 2 (“não atende especificação”).
 - `dbo.Marcacao` ainda chegou a ficar sem linhas em testes anteriores de passagem; validar de novo gravação de evento após giro completo com monitoramento ativo.
-- O agente Conecta Notifica **não** envia faces ao leitor nem lê coluna de foto; sincroniza cadastro básico (id/nome/cartão/ativo). Faces continuam responsabilidade TopPortaria/TopFace.
+- O agente Conecta Notifica não envia faces ao leitor. Desde 12/11 ele lê `dbo.Pessoas.foto` só para o comando manual de foto do painel e envia o nome do perfil de acesso como turma na sincronização de alunos. O envio ao leitor facial continua com TopPortaria/TopFace.
 
 ## Ajuste aplicado — 02/10/2026
 
