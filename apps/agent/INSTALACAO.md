@@ -97,21 +97,10 @@ O CI faz isso a cada push em `apps/agent` e a cada release publicada
 
 ## Antes de ir para a escola
 
-Na sua máquina (esta), deixe rodando:
-
-```sh
-cd apps/api && npm run db:dev      # terminal 1 — Postgres embutido
-cd apps/api && npm run start:dev   # terminal 2 — API em :3001
-cd apps/web && npm run dev         # terminal 3 — painel em :3000
-```
-
-Abra http://localhost:3000 e entre com `direcao@escolademo.dev` /
-`demo1234`. Deixe a **Visão geral** aberta — é nela que o giro vai aparecer.
-
-> Para um teste na rede local, o agente aponta para o IP desta máquina
-> (`ipconfig getifaddr en0`) na porta 3001, e o firewall do macOS precisa
-> liberar conexões de entrada para o node. Em produção o agente usa a URL
-> fixa da VPS — veja `deploy/LEIA-ME.md`.
+O painel e a API não estão neste repositório. O agente só precisa da URL do
+painel e da chave `cn_` da escola. Em produção essa URL é a do painel já
+publicado. Num teste local, use o endereço da API que estiver no ar e libere
+a porta no firewall da máquina que hospeda o painel.
 
 ## Na máquina Windows da escola
 
