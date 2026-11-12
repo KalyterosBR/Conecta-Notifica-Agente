@@ -267,7 +267,13 @@ func (r *Repo) BuscarAlunos(ctx context.Context) ([]modelo.Aluno, error) {
 		}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Turma vazia na consulta é preenchida pelo nome do perfil de acesso.
+	// Falha nessa leitura não impede o envio de nome e cartão.
+	r.preencherTurmaPeloPerfil(ctx, out)
+	return out, nil
 }
 
 // ConsultaAlunosSugerida descobre a tabela ligada a Marcacao.CodigoPessoa e
@@ -330,8 +336,12 @@ WHERE s.name=@schema AND t.name=@tabela`, sql.Named("schema", schema), sql.Named
 	// Evita interpretar Status/validade de forma ambígua. Uma coluna Ativo
 	// explícita pode ser mapeada; demais casos mantêm active=1 para revisão.
 	campos := []string{"p." + ident(codigo) + " AS external_id", "p." + ident(nome) + " AS nome"}
+	var joinPerfil string
 	if turma := pegar("Turma", "Departamento", "Setor"); turma != "" {
 		campos = append(campos, "p."+ident(turma)+" AS turma")
+	} else if rel, err := r.relacaoPerfil(ctx); err == nil && rel.tabela != "" && strings.EqualFold(schema, "dbo") && strings.EqualFold(tabela, "Pessoas") {
+		campos = append(campos, "per."+ident(rel.nome)+" AS turma")
+		joinPerfil = "\n  LEFT JOIN " + ident(rel.schema) + "." + ident(rel.tabela) + " AS per ON per." + ident(rel.chave) + " = p." + ident("CodigoPerfilAcesso")
 	} else {
 		campos = append(campos, "'' AS turma")
 	}
@@ -345,8 +355,11 @@ WHERE s.name=@schema AND t.name=@tabela`, sql.Named("schema", schema), sql.Named
 	} else {
 		campos = append(campos, "1 AS ativo")
 	}
-	consulta := "SELECT " + strings.Join(campos, ",\n       ") + "\n  FROM " + ident(schema) + "." + ident(tabela) + " AS p"
+	consulta := "SELECT " + strings.Join(campos, ",\n       ") + "\n  FROM " + ident(schema) + "." + ident(tabela) + " AS p" + joinPerfil
 	aviso := fmt.Sprintf("Tabela reconhecida: %s.%s. Revise a regra de validade antes de ativar sincronização automática.", schema, tabela)
+	if joinPerfil != "" {
+		aviso += " A turma usa o nome do perfil de acesso."
+	}
 	if pegar("DataInicio") != "" || pegar("DataFim") != "" || pegar("ControlaValidade") != "" {
 		aviso += " Foram encontradas colunas de validade, cuja interpretação não será presumida."
 	}

@@ -70,6 +70,8 @@ consultas:
   # Sincroniza o cadastro para o SaaS resolver aluno -> responsáveis.
   # O nome da tabela de pessoas varia por instalação: rode `descobrir` e ajuste.
   # Colunas aceitas: external_id/codigo, nome, turma, cartao, ativo.
+  # Se turma vier vazia, o agente completa com o nome do perfil de acesso
+  # (Pessoas.CodigoPerfilAcesso) durante a sincronização já agendada.
   sincronizar_alunos: false
   intervalo_alunos_minutos: 60
   alunos: |

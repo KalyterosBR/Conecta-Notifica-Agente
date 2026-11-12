@@ -182,6 +182,18 @@ Os logs registram a próxima tentativa e a recuperação.
 { "full": true, "students": [ { "external_id": "77", "name": "Ana Souza", "class_name": "5A", "active": true } ] }
 ```
 
+`class_name` é a turma. Nesta base ela sai do nome do perfil de acesso (`Pessoas.CodigoPerfilAcesso`), no mesmo ciclo da sincronização de alunos. O que o painel precisa gravar e mostrar está em [docs/CONTRATO-TURMA.md](docs/CONTRATO-TURMA.md).
+
+A foto não entra nesse lote. O comando manual `sincronizar-fotos` envia `dbo.Pessoas.foto` em `POST /v1/agent/students/{external_id}/photo`. O contrato para o painel receber e exibir está em [docs/CONTRATO-FOTO-ALUNO.md](docs/CONTRATO-FOTO-ALUNO.md).
+
+### `POST /v1/agent/students/{external_id}/photo`
+
+```json
+{ "sha256": "<sha256 hex dos bytes do JPEG>", "data_base64": "<jpeg em base64>" }
+```
+
+Resposta de sucesso: `{"status":"gravada"}` ou `{"status":"igual"}`.
+
 ### `POST /v1/agent/heartbeat`
 
 ```json

@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/conecta/notifica-agent/internal/config"
@@ -102,6 +104,20 @@ func (c *Cliente) EnviarEventos(ctx context.Context, evs []modelo.Evento) (model
 
 func (c *Cliente) SincronizarAlunos(ctx context.Context, alunos []modelo.Aluno, completo bool) error {
 	return c.post(ctx, "/v1/agent/students/sync", loteAlunos{Alunos: alunos, Completo: completo}, "", nil)
+}
+
+// EnviarFoto manda o JPEG de uma pessoa. O painel responde "gravada" ou
+// "igual" quando o SHA-256 já está lá. O corpo não entra em log.
+func (c *Cliente) EnviarFoto(ctx context.Context, idExterno, sha string, jpeg []byte) (string, error) {
+	var resp struct {
+		Status string `json:"status"`
+	}
+	corpo := struct {
+		SHA  string `json:"sha256"`
+		Data string `json:"data_base64"`
+	}{sha, base64.StdEncoding.EncodeToString(jpeg)}
+	err := c.post(ctx, "/v1/agent/students/"+url.PathEscape(idExterno)+"/photo", corpo, "", &resp)
+	return resp.Status, err
 }
 
 func (c *Cliente) Heartbeat(ctx context.Context, hb modelo.Heartbeat) error {

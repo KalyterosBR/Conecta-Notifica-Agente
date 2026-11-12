@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,7 @@ comandos:
   status       mostra o estado do serviço
   status-json  mostra serviço, conectividade e fila em JSON para a central
   sincronizar-alunos envia os cadastros da consulta somente de leitura ao painel
+  sincronizar-fotos envia dbo.Pessoas.foto ao painel, uma imagem por vez
   preparar-consulta-alunos descobre e valida um SELECT sem retornar cadastros
   testar       testa a conexão com o banco e com o SaaS e sai
 	  diagnostico gera um relatório seguro para o suporte e sai
@@ -229,6 +231,8 @@ func executar(comando, caminhoConfig string) error {
 		return imprimirStatusJSON(cfg, svcCfg)
 	case "sincronizar-alunos":
 		return sincronizarAlunosAgora(cfg, log, Versao)
+	case "sincronizar-fotos":
+		return sincronizarFotosAgora(cfg, log, Versao)
 	case "diagnostico":
 		caminho, err := diagnosticoSeguroParaArquivo(abs)
 		if err != nil {
@@ -354,6 +358,60 @@ func sincronizarAlunosAgora(cfg *config.Config, log *slog.Logger, versao string)
 	}
 	gravar(estado.Sincronizacao{TentativaEm: tentativa, ConcluidaEm: time.Now(), Quantidade: len(alunos), Sucesso: true, Mensagem: "Cadastros enviados ao painel."})
 	fmt.Printf("Sincronização concluída: %d cadastro(s) enviado(s).\n", len(alunos))
+	return nil
+}
+
+func sincronizarFotosAgora(cfg *config.Config, log *slog.Logger, versao string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	repo, err := banco.Abrir(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("conexão com banco: %w", err)
+	}
+	defer repo.Fechar()
+	cliente := api.Novo(cfg, versao)
+	var enviadas, iguais, semCadastro, ignoradas int
+	err = repo.PercorrerFotos(ctx, func(f banco.FotoCadastro) error {
+		if len(f.JPEG) == 0 {
+			ignoradas++
+			return nil
+		}
+		status, err := cliente.EnviarFoto(ctx, f.IDExterno, f.SHA256, f.JPEG)
+		if err != nil {
+			var he *api.ErroHTTP
+			if errors.As(err, &he) && he.Status == http.StatusNotFound {
+				if strings.Contains(he.Corpo, "Cannot POST") {
+					return fmt.Errorf("o painel ainda não recebe foto de aluno: %s", strings.TrimSpace(he.Corpo))
+				}
+				semCadastro++
+				return nil
+			}
+			if errors.As(err, &he) && he.Status == http.StatusBadRequest {
+				ignoradas++
+				log.Warn("foto recusada pelo painel", "pessoa", f.IDExterno, "status", he.Status)
+				return nil
+			}
+			return fmt.Errorf("pessoa %s: %w", f.IDExterno, err)
+		}
+		switch status {
+		case "igual":
+			iguais++
+		default:
+			enviadas++
+		}
+		total := enviadas + iguais + semCadastro + ignoradas
+		if total%25 == 0 {
+			log.Info("fotos em andamento", "enviadas", enviadas, "iguais", iguais, "sem_cadastro", semCadastro, "ignoradas", ignoradas)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Fotos: %d enviada(s), %d já iguais, %d sem cadastro no painel, %d ignorada(s).\n", enviadas, iguais, semCadastro, ignoradas)
+	if semCadastro > 0 {
+		fmt.Println("Quem ficou sem cadastro precisa entrar antes por sincronizar-alunos. A foto usa o Codigo de dbo.Pessoas como external_id.")
+	}
 	return nil
 }
 
